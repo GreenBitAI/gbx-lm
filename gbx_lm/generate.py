@@ -1,10 +1,12 @@
 import argparse
 
 import mlx.core as mx
+import mlx.nn as nn
+from transformers import PreTrainedTokenizer
 from utils import load, generate
 
 DEFAULT_MODEL_PATH = "mlx_model"
-DEFAULT_PROMPT = "hello, what's your name?"
+DEFAULT_PROMPT = None
 DEFAULT_MAX_TOKENS = 100
 DEFAULT_TEMP = 0.6
 DEFAULT_SEED = 0
@@ -89,6 +91,32 @@ def colorprint_by_t0(s, t0):
     colorprint(color, s)
 
 
+def do_generate(args, model: nn.Module, tokenizer: PreTrainedTokenizer, prompt: str):
+    if not args.ignore_chat_template and (
+            hasattr(tokenizer, "apply_chat_template")
+            and tokenizer.chat_template is not None
+    ):
+        messages = [{"role": "user", "content": prompt}]
+        prompt = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+    else:
+        prompt = prompt
+
+    formatter = colorprint_by_t0 if args.colorize else None
+
+    generate(
+        model,
+        tokenizer,
+        prompt,
+        args.temp,
+        args.max_tokens,
+        True,
+        formatter=formatter,
+        top_p=args.top_p,
+    )
+
+
 def main(args):
     mx.random.seed(args.seed)
 
@@ -101,34 +129,14 @@ def main(args):
         args.model, tokenizer_config=tokenizer_config
     )
 
-    while True:
-        user_input = input("Input prompt or type 'exit' to quit): ")
-        if user_input.lower() in ['exit', 'quit']:
-            break
-
-        if not args.ignore_chat_template and (
-            hasattr(tokenizer, "apply_chat_template")
-            and tokenizer.chat_template is not None
-        ):
-            messages = [{"role": "user", "content": user_input}]
-            prompt = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-        else:
-            prompt = user_input
-
-        formatter = colorprint_by_t0 if args.colorize else None
-
-        generate(
-            model,
-            tokenizer,
-            prompt,
-            args.temp,
-            args.max_tokens,
-            True,
-            formatter=formatter,
-            top_p=args.top_p,
-        )
+    if args.prompt is None:
+        while True:
+            user_input = input("Input prompt or type 'exit' to quit): ")
+            if user_input.lower() in ['exit', 'quit']:
+                break
+            do_generate(args, model, tokenizer, user_input)
+    else:
+        do_generate(args, model, tokenizer, args.prompt)
 
 
 if __name__ == "__main__":

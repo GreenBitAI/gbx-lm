@@ -19,7 +19,6 @@ pip install gbx-lm
 or clone the repository and install the required dependencies (for Python >= 3.9):
 ```bash
 git clone https://github.com/GreenBitAI/gbx-lm.git
-cd gbx-lm/
 pip install -r requirements.txt
 ```
 Alternatively you can also use the prepared conda environment configuration:
@@ -32,7 +31,7 @@ conda activate gbai_mlx_lm
 ### Converting Models
 To convert a GreenBitAI's Low-bit LLM to the MLX format, run:
 ```bash
-python gba2mlx.py --hf-path <input file path or a Hugging Face repo> --mlx-path <output file path> --hf-token <your huggingface token> --upload-repo <a Hugging Face repo name>
+python gbx_lm/gba2mlx.py --hf-path <input file path or a Hugging Face repo> --mlx-path <output file path> --hf-token <your huggingface token> --upload-repo <a Hugging Face repo name>
 ```
 
 ### Generating Content
@@ -50,11 +49,11 @@ python -m gbx_lm.generate --model <path to a converted model or a Hugging Face r
 In this example, the pretrained 4-bit model "yi-6b-chat-w4a16g128" will be downloaded from [GreenBitAI's Hugging Face repository](https://huggingface.co/GreenBitAI) and converted into mlx compatible format, and saved in the local directory "yi-6b-chat-w4a16g128-mlx".
 We can also use the "--upload-repo" parameter to provide a Hugging Face repo URL with valid write permissions. This will directly upload the model converted and saved locally to this Hugging Face repo. 
 ```bash
-python gba2mlx.py --hf-path GreenBitAI/yi-6b-chat-w4a16g128 --mlx-path yi-6b-chat-w4a16g128-mlx/ --hf-token <your huggingface token> --upload-repo GreenBitAI/yi-6b-chat-w4a16g128-mlx
+python gbx_lm/gba2mlx.py --hf-path GreenBitAI/yi-6b-chat-w4a16g128 --mlx-path yi-6b-chat-w4a16g128-mlx/ --hf-token <your huggingface token> --upload-repo GreenBitAI/yi-6b-chat-w4a16g128-mlx
 ```
 It will download and run the local model to generate natural language content through prompts given by users.
 ```bash
-python -m mlx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tokens 500 --prompt "please calculate 4*8+10-2=" --eos-token '<|im_end|>'
+python -m gbx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tokens 200 --prompt "please calculate 4*8+10-2=" --eos-token '<|im_end|>'
 ```
 
 ## License
