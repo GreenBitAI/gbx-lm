@@ -1,0 +1,7 @@
+mlx>=0.6
+numpy
+protobuf
+torch>=2.0.0
+sentencepiece
+transformers>=4.38.0
+huggingface_hub
