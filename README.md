@@ -59,5 +59,5 @@ python -m gbx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tok
 ## License
 The original code was released under its respective license and copyrights, i.e.:
 
-- `gba2mlx.py`, `generate.py`, `utils.py` and `models/*.py` released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE).
+- `gba2mlx.py`, `generate.py`, `utils.py` and `models/*.py` released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-examples](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm).
 - We release our changes and additions to these files under the [Apache 2.0 License](LICENSE).
