@@ -1,3 +1,2 @@
-from .gba2mlx import convert
 from .utils import generate, load
 from .version import __version__

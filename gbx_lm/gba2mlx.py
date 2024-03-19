@@ -1,7 +1,6 @@
 import argparse
 import copy
 from shutil import copy as file_copy
-import glob
 import json
 from pathlib import Path
 from typing import Dict, Tuple, Optional, Union, Any
