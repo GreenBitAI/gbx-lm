@@ -2,7 +2,7 @@
 # GBA Model Toolkit for MLX
 
 ## Introduction
-Welcome to the GBA Model Toolkit for MLX! This comprehensive Python package not only facilitates the conversion of models from GreenBitAI's Low-bit Language Models (LLMs) format to MLX framework compatible format but also supports generation, model loading, and other essential scripts tailored for GreenBitAI (GBA) quantized models. Designed to enhance the integration and deployment of GBA models within the MLX ecosystem, this toolkit enables the efficient execution of GBA models on a variety of platforms, with special optimizations for Apple devices to enable local inference and natural language content generation. 
+Welcome to the GBA Model Toolkit for [MLX](https://github.com/ml-explore/mlx)! This comprehensive Python package not only facilitates the conversion of [GreenBitAI's Low-bit Language Models (LLMs)](https://huggingface.co/GreenBitAI) to [MLX framework](https://github.com/ml-explore/mlx) compatible format but also supports generation, model loading, and other essential scripts tailored for GreenBitAI (GBA) quantized models. Designed to enhance the integration and deployment of GBA models within the MLX ecosystem, this toolkit enables the efficient execution of GBA models on a variety of platforms, with special optimizations for Apple devices to enable local inference and natural language content generation. 
 
 ## Features
 
@@ -53,7 +53,7 @@ python gbx_lm/gba2mlx.py --hf-path GreenBitAI/yi-6b-chat-w4a16g128 --mlx-path yi
 ```
 It will download and run the local model to generate natural language content through prompts given by users.
 ```bash
-python -m gbx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tokens 200 --prompt "please calculate 4*8+10-2=" --eos-token '<|im_end|>'
+python -m gbx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tokens 100 --prompt "calculate 4*8+1024=" --eos-token '<|im_end|>'
 ```
 
 ## License

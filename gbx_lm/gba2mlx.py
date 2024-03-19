@@ -1,5 +1,6 @@
 import argparse
 import copy
+from shutil import copy as file_copy
 import glob
 import json
 from pathlib import Path
@@ -83,7 +84,7 @@ def fetch_from_hub(
     config = transformers.AutoConfig.from_pretrained(model_path, token=token)
     tokenizer = transformers.AutoTokenizer.from_pretrained(model_path, token=token)
     model = load_model(model_path, bits, group_size, is_conversion)
-    return model, config.to_dict(), tokenizer
+    return model, config.to_dict(), tokenizer, model_path
 
 
 def get_quantized_parameters(
@@ -307,7 +308,7 @@ def convert(
     print("[INFO] Loading ...")
     is_conversion = True
     q_bits, q_group_size = extract_bits_and_group_size(hf_path)
-    model, config, tokenizer = fetch_from_hub(hf_path, token=hf_token, group_size=q_group_size, bits=q_bits, is_conversion=is_conversion)
+    model, config, tokenizer, model_path = fetch_from_hub(hf_path, token=hf_token, group_size=q_group_size, bits=q_bits, is_conversion=is_conversion)
     weights, config = get_quantized_parameters(model, config, q_group_size, q_bits)
 
     print("[INFO] Creating dir '{}' for saving ...".format(mlx_path))
@@ -318,30 +319,37 @@ def convert(
     del model
     save_weights(mlx_path, weights, donate_weights=True)
 
-    # shards = make_shards(weights)
-    # for i, shard in enumerate(shards):
-    #     mx.save_safetensors(str(mlx_path / f"weights.{i:02d}.safetensors"), shard)
-
     tokenizer.save_pretrained(mlx_path)
 
     print("[INFO] Saving config file ...")
     save_config(config, config_path=mlx_path / "config.json")
 
-    print("[INFO] Model conversion finished!")
+    print("[INFO] Saving strategy config file ...")
+    try:
+        # check if file exists
+        with open(model_path / "strategy.json", "r") as f:
+            file_copy(model_path / "strategy.json", mlx_path / "strategy.json")
+            print(f"[INFO] Strategy config file copied to {mlx_path}")
+    except FileNotFoundError:
+        print(f"[INFO] Strategy config file not found in {model_path}")
+
+    print(f"[INFO] Converted model files have been saved in {mlx_path.absolute()}/")
+    for file in mlx_path.iterdir():
+        if file.is_file():
+            print("[INFO] |----" + file.name)
 
     if upload_repo is not None:
         print("[INFO] Upload saved model to {}.".format(upload_repo))
-
         try:
             is_valid, message = check_upload_repo_string(upload_repo)
             if is_valid:
                 upload_to_hub(mlx_path, upload_repo, hf_path, token=hf_token)
                 print("[INFO] Model updload finished!")
             else:
-                print(f"Error: {message}")
+                print(f"[Error] {message}")
         except Exception as e:
             # Handle any other exceptions that might occur
-            print(f"An unexpected error occurred: {e}")
+            print(f"[Error] An unexpected error occurred: {e}")
 
 
 if __name__ == "__main__":

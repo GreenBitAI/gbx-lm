@@ -71,7 +71,7 @@ class QuantizedLinear(Module):
             dtype=mx.float16
         )
 
-        self.q_perm = mx.arange(self.input_dims, dtype=mx.int16).reshape(1, 1, -1)
+        self.q_perm = mx.arange(self.input_dims, dtype=mx.int16)
 
         if use_double_quantization:
             shape_qstatistic = (
@@ -153,7 +153,7 @@ class QuantizedLinear(Module):
         # Therefore, here we need to add the negative sign manually.
         self.zeros = -self.zeros
         # Convert the index used for scatter into the index directly facing tensor
-        self.q_perm = mx.argsort(self.q_perm)
+        self.q_perm = mx.argsort(self.q_perm).reshape(1, 1, -1).astype(mx.int16)
 
         # self.weight = mx.zeros(
         #     shape=self.qweight.shape,
@@ -179,9 +179,11 @@ class QuantizedLinear(Module):
         self.freeze(recurse=False)
 
     def _extra_repr(self):
-        out_dims, in_dims = self.weight.shape
+        in_dims, out_dims = self.qweight.shape
         in_dims *= 32 // self.bits
-        assert self.input_dims == in_dims, f"input_dims mismatch of the quantized model."
+
+        # assert self.input_dims == in_dims, f"input_dims mismatch of the quantized model."
+
         return (
             f"input_dims={in_dims}, output_dims={out_dims}, bias={'bias' in self}, "
             f"group_size={self.group_size}, bits={self.bits}"
@@ -214,20 +216,47 @@ class QuantizedLinear(Module):
         model: Module,
         group_size: int = 64,
         bits: int = 4,
+        strategy: dict = None,
         use_double_quantization: bool = False,
         gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear),
     ):
-        """update group size, bits and re-init params"""
         def _run_if_q_gba_linear(m):
+            """
+            update group size, bits and re-init params
+            """
             if gba_linear_class_predicate(m):
                 m.group_size = group_size
                 m.bits = bits
                 m.init_params(use_double_quantization)
             return m
 
-        leaves = model.leaf_modules()
-        leaves = tree_map(_run_if_q_gba_linear, leaves, is_leaf=Module.is_module)
-        model.update_modules(leaves)
+        def _assign_attributs(model: Module):
+            """
+            read bits from strategy and update QuantizedLinear layers
+            """
+            for name, child in model.named_modules():
+                if isinstance(child, QuantizedLinear):
+                    # read bits and group size from strategy
+                    layer_number = name.split('.')[2]
+                    strategy_per_block = strategy["model.layers.{}".format(layer_number)]
+
+                    for key in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']:
+                        if key in name:
+                            strg = strategy_per_block[key]
+                            break
+                    child.bits = strg["bits"][0]
+                    child.group_size = strg["group_size"][str(child.bits)]
+                    # print(f'[DEBUG]: {name}: Updated QuantizedLinear bits to {child.bits}, group_size to {child.group_size}')
+
+                    # re-init params
+                    child.init_params(use_double_quantization)
+
+        if strategy is None:
+            leaves = model.leaf_modules()
+            leaves = tree_map(_run_if_q_gba_linear, leaves, is_leaf=Module.is_module)
+            model.update_modules(leaves)
+        else:
+            _assign_attributs(model)
 
 
     @classmethod

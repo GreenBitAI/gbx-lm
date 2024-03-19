@@ -345,6 +345,15 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
         FileNotFoundError: If the weight files (.safetensors) are not found.
         ValueError: If the model class or args class are not found or cannot be instantiated.
     """
+    # ======== load strategy.json file ========= #
+    strategy = None
+    try:
+        with open(model_path / "strategy.json", "r") as f:
+            strategy = json.load(f)["measurement"]
+    except FileNotFoundError:
+        logging.error(f"[INFO] Strategy config file not found in {model_path}")
+
+    # ===== load quantization config file ====== #
     try:
         with open(model_path / "config.json", "r") as f:
             config = json.load(f)
@@ -352,7 +361,7 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
             if quantization == None:
                 quantization = {"group_size": group_size, "bits": bits}
     except FileNotFoundError:
-        logging.error(f"Config file not found in {model_path}")
+        logging.error(f"[INFO] Quantization config file not found in {model_path}")
         raise
 
     assert quantization['group_size'] in [32, 64, 128], f"The group size value ({group_size}) must be 32, 64 or 128."
@@ -397,10 +406,10 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
     QuantizedLinear.reinit_module(
         model,
         **quantization,
+        strategy=strategy,
         use_double_quantization = use_double_quantization
     )
 
-    # print(list(weights.items()))
     model.load_weights(list(weights.items()), strict=False)
 
     # If double quantization used in GBA models, fp16 scales and zeros will be created for supporting mlx format.
@@ -417,7 +426,6 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
     if not lazy:
         mx.eval(model.parameters())
 
-    # print(model.parameters())
     mx.eval()
     return model
 
