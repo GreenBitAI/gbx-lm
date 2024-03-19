@@ -351,7 +351,7 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
         with open(model_path / "strategy.json", "r") as f:
             strategy = json.load(f)["measurement"]
     except FileNotFoundError:
-        logging.error(f"[INFO] Strategy config file not found in {model_path}")
+        logging.info(f"[WARNING] Strategy config file not found in {model_path}")
 
     # ===== load quantization config file ====== #
     try:
@@ -361,7 +361,7 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
             if quantization == None:
                 quantization = {"group_size": group_size, "bits": bits}
     except FileNotFoundError:
-        logging.error(f"[INFO] Quantization config file not found in {model_path}")
+        logging.info(f"[WARNING] Quantization config file not found in {model_path}")
         raise
 
     assert quantization['group_size'] in [32, 64, 128], f"The group size value ({group_size}) must be 32, 64 or 128."

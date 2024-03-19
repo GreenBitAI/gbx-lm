@@ -71,7 +71,7 @@ class QuantizedLinear(Module):
             dtype=mx.float16
         )
 
-        self.q_perm = mx.arange(self.input_dims, dtype=mx.int16)
+        self.q_perm = mx.zeros(self.input_dims, dtype=mx.int16)
 
         if use_double_quantization:
             shape_qstatistic = (
@@ -152,25 +152,13 @@ class QuantizedLinear(Module):
         # q_weight * scale - zero, however '+' is used in the actual calculation.
         # Therefore, here we need to add the negative sign manually.
         self.zeros = -self.zeros
-        # Convert the index used for scatter into the index directly facing tensor
-        self.q_perm = mx.argsort(self.q_perm).reshape(1, 1, -1).astype(mx.int16)
 
-        # self.weight = mx.zeros(
-        #     shape=self.qweight.shape,
-        #     dtype=mx.uint32
-        # )
-        # self.biases = mx.zeros(
-        #     shape=self.zeros.shape,
-        #     dtype=mx.float16
-        # )
-        # self.weight = self.qweight
-        # self.biases = self.zeros
-        # # aligned with mlx format
-        # self.biases = -self.biases
-        #
-        # # release
-        # self['qweight'] = None
-        # self['zeros'] = None
+        # check if no q_perm Assignment we release it
+        if mx.all(self.q_perm == 0):
+            self.q_perm = None
+        else:
+            # to 3D in order to use mx.take_along_axis to re-arrange x's permutation in forward
+            self.q_perm = self.q_perm.reshape(1, 1, -1)
 
     def unfreeze(self, *args, **kwargs):
         """Wrap unfreeze so that we unfreeze any layers we might contain but
@@ -182,7 +170,7 @@ class QuantizedLinear(Module):
         in_dims, out_dims = self.qweight.shape
         in_dims *= 32 // self.bits
 
-        # assert self.input_dims == in_dims, f"input_dims mismatch of the quantized model."
+        assert self.input_dims == in_dims, f"input_dims mismatch of the quantized model."
 
         return (
             f"input_dims={in_dims}, output_dims={out_dims}, bias={'bias' in self}, "
@@ -192,9 +180,9 @@ class QuantizedLinear(Module):
     def __call__(self, x):
         # mul channel_scale
         x = mx.multiply(x, self.channel_scale)
-        # # array rearrangement
-        # x = x[..., self.q_perm]
-        x = mx.take_along_axis(x, self.q_perm, axis=-1)
+        # # array rearrangement if necessary
+        if self.q_perm is not None:
+            x = mx.take_along_axis(x, self.q_perm, axis=-1)
         # quantized matmul
         x = mx.quantized_matmul(
             x,
