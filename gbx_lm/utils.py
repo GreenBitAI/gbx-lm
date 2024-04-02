@@ -353,7 +353,7 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
     # ======== load strategy.json file ========= #
     strategy = None
     try:
-        with open(model_path / "strategy.json", "r") as f:
+        with open(model_path / "quant_strategy.json", "r") as f:
             strategy = json.load(f)["measurement"]
     except FileNotFoundError:
         logging.info(f"[WARNING] Strategy config file not found in {model_path}")
@@ -369,8 +369,6 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
         logging.info(f"[WARNING] Quantization config file not found in {model_path}")
         raise
 
-    assert quantization['group_size'] in [32, 64, 128], f"The group size value ({group_size}) must be 32, 64 or 128."
-
     weight_files = glob.glob(str(model_path / "*.safetensors"))
     if not weight_files:
         logging.error(f"No safetensors found in {model_path}")
@@ -382,6 +380,9 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
 
     # get if uses double quantization, a technique to reduce the model size
     use_double_quantization, use_q_perm = get_parameter_usage_info(weights)
+    if not use_q_perm:
+        assert quantization['group_size'] in [32, 64,
+                                              128], f"The group size value ({group_size}) must be 32, 64 or 128."
     if is_conversion:
         info_message = "[INFO] This model {} double quantization.".format(
             "USES" if use_double_quantization else "DOES NOT use")

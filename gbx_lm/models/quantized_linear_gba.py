@@ -234,6 +234,7 @@ class QuantizedLinear(Module):
                             break
                     child.bits = strg["bits"][0]
                     child.group_size = strg["group_size"][str(child.bits)]
+                    assert child.group_size in [32, 64, 128], f"The group size value ({child.group_size}) must be 32, 64 or 128."
                     # print(f'[DEBUG]: {name}: Updated QuantizedLinear bits to {child.bits}, group_size to {child.group_size}')
 
                     # re-init params
