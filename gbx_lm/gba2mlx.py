@@ -323,11 +323,11 @@ def convert(
     print("[INFO] Saving config file ...")
     save_config(config, config_path=mlx_path / "config.json")
 
-    print("[INFO] Saving strategy config file ...")
+    print("[INFO] Saving quant strategy config file ...")
     try:
         # check if file exists
-        with open(model_path / "strategy.json", "r") as f:
-            file_copy(model_path / "strategy.json", mlx_path / "strategy.json")
+        with open(model_path / "quant_strategy.json", "r") as f:
+            file_copy(model_path / "quant_strategy.json", mlx_path / "quant_strategy.json")
             print(f"[INFO] Strategy config file copied to {mlx_path}")
     except FileNotFoundError:
         print(f"[INFO] Strategy config file not found in {model_path}")
