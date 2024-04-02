@@ -277,25 +277,30 @@ def generate(
     return token_string
 
 
-def get_use_double_quantization(weights) -> bool:
+def get_parameter_usage_info(weights):
     """
-    Determines whether double quantization is used for scales and zeros within the given weights.
+    Determines whether double quantization and q_perm are used for scales and zeros within the given weights.
 
     This function iterates through the keys of the weights dictionary, checking for specific
     keys related to quantization statistics, scales, and zeros. If any of these keys are present,
     it indicates that double quantization is applied to either scales or zeros, or both.
 
     Parameters:
-    - weights (dict): A dictionary containing model weights and potentially quantization
+        weights (dict): A dictionary containing model weights and potentially quantization
                       information.
 
     Returns:
-    - bool: True if double quantization is used for either scales or zeros, False otherwise.
+        bool: True if double quantization is used for either scales or zeros, False otherwise.
+        bool: True if q_perm is used, False otherwise.
     """
+    use_double_quantization = False
+    use_q_perm = False
     for k, v in weights.items():
         if 'qstatistic' in k or 'qscales_scales' in k or 'qzeros_scales' in k or 'qscales_zeros' in k or 'qzeros_zeros' in k:
-            return True
-    return False
+            use_double_quantization = True
+        if 'q_perm' in k:
+            use_q_perm = True
+    return use_double_quantization, use_q_perm
 
 
 def extract_bits_and_group_size(s):
@@ -376,7 +381,7 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
         weights.update(mx.load(wf))
 
     # get if uses double quantization, a technique to reduce the model size
-    use_double_quantization = get_use_double_quantization(weights)
+    use_double_quantization, use_q_perm = get_parameter_usage_info(weights)
     if is_conversion:
         info_message = "[INFO] This model {} double quantization.".format(
             "USES" if use_double_quantization else "DOES NOT use")
@@ -407,7 +412,8 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
         model,
         **quantization,
         strategy=strategy,
-        use_double_quantization = use_double_quantization
+        use_double_quantization = use_double_quantization,
+        use_q_perm = use_q_perm
     )
 
     model.load_weights(list(weights.items()), strict=False)

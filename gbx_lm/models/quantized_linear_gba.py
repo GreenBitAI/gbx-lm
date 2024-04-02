@@ -53,11 +53,11 @@ class QuantizedLinear(Module):
         # And bias if needed
         if bias:
             self.bias = mx.zeros((self.output_dims,))
-        self.init_params(False)
+        self.init_params(False, False)
         # Freeze this model's parameters
         self.freeze()
 
-    def init_params(self, use_double_quantization: bool):
+    def init_params(self, use_double_quantization: bool, use_q_perm: bool):
         shape_w = (self.output_dims, self.input_dims // 32 * self.bits)
         shape_sz = (self.output_dims, self.input_dims // self.group_size)
 
@@ -71,7 +71,8 @@ class QuantizedLinear(Module):
             dtype=mx.float16
         )
 
-        self.q_perm = mx.zeros(self.input_dims, dtype=mx.int16)
+        if use_q_perm:
+            self.q_perm = mx.zeros(self.input_dims, dtype=mx.int16)
 
         if use_double_quantization:
             shape_qstatistic = (
@@ -154,9 +155,7 @@ class QuantizedLinear(Module):
         self.zeros = -self.zeros
 
         # check if no q_perm Assignment we release it
-        if mx.all(self.q_perm == 0):
-            self.q_perm = None
-        else:
+        if hasattr(self, 'q_perm'):
             # to 3D in order to use mx.take_along_axis to re-arrange x's permutation in forward
             self.q_perm = self.q_perm.reshape(1, 1, -1)
 
@@ -181,7 +180,7 @@ class QuantizedLinear(Module):
         # mul channel_scale
         x = mx.multiply(x, self.channel_scale)
         # # array rearrangement if necessary
-        if self.q_perm is not None:
+        if hasattr(self, 'q_perm'):
             x = mx.take_along_axis(x, self.q_perm, axis=-1)
         # quantized matmul
         x = mx.quantized_matmul(
@@ -206,6 +205,7 @@ class QuantizedLinear(Module):
         bits: int = 4,
         strategy: dict = None,
         use_double_quantization: bool = False,
+        use_q_perm: bool = False,
         gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear),
     ):
         def _run_if_q_gba_linear(m):
@@ -215,7 +215,7 @@ class QuantizedLinear(Module):
             if gba_linear_class_predicate(m):
                 m.group_size = group_size
                 m.bits = bits
-                m.init_params(use_double_quantization)
+                m.init_params(use_double_quantization, use_q_perm)
             return m
 
         def _assign_attributs(model: Module):
@@ -237,7 +237,7 @@ class QuantizedLinear(Module):
                     # print(f'[DEBUG]: {name}: Updated QuantizedLinear bits to {child.bits}, group_size to {child.group_size}')
 
                     # re-init params
-                    child.init_params(use_double_quantization)
+                    child.init_params(use_double_quantization, use_q_perm)
 
         if strategy is None:
             leaves = model.leaf_modules()
