@@ -165,7 +165,7 @@ model, tokenizer = load("{upload_repo}")
 response = generate(model, tokenizer, prompt="hello", verbose=True)
 ```
 """
-    card.save(os.path.join(path, "../README.md"))
+    card.save(os.path.join(path, "README.md"))
 
     logging.set_verbosity_info()
 
