@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -7,31 +7,20 @@ import mlx.nn as nn
 from .base import BaseModelArgs
 from .quantized_linear_gba import QuantizedLinear
 
+
 @dataclass
 class ModelArgs(BaseModelArgs):
+    model_type: str
     hidden_size: int
     num_hidden_layers: int
     intermediate_size: int
     num_attention_heads: int
+    head_dim: int
     rms_norm_eps: float
     vocab_size: int
-    num_key_value_heads: int = None
+    num_key_value_heads: int
     rope_theta: float = 10000
     rope_traditional: bool = False
-    model_type: str = None
-    rope_scaling: Optional[Dict[str, Union[float, str]]] = None
-
-    def __post_init__(self):
-        if self.num_key_value_heads is None:
-            self.num_key_value_heads = self.num_attention_heads
-
-        if self.rope_scaling:
-            required_keys = {"factor", "type"}
-            if not all(key in self.rope_scaling for key in required_keys):
-                raise ValueError(f"rope_scaling must contain keys {required_keys}")
-
-            if self.rope_scaling["type"] != "linear":
-                raise ValueError("rope_scaling 'type' currently only supports 'linear'")
 
 
 class RMSNorm(nn.Module):
@@ -40,12 +29,8 @@ class RMSNorm(nn.Module):
         self.weight = mx.ones((dims,))
         self.eps = eps
 
-    def _norm(self, x):
-        return x * mx.rsqrt(x.square().mean(-1, keepdims=True) + self.eps)
-
     def __call__(self, x):
-        output = self._norm(x.astype(mx.float32)).astype(x.dtype)
-        return self.weight * output
+        return mx.fast.rms_norm(x, 1.0 + self.weight, self.eps)
 
 
 class Attention(nn.Module):
@@ -55,10 +40,8 @@ class Attention(nn.Module):
         dim = args.hidden_size
         self.n_heads = n_heads = args.num_attention_heads
         self.n_kv_heads = n_kv_heads = args.num_key_value_heads
+        self.head_dim = head_dim = args.head_dim
 
-        self.repeats = n_heads // n_kv_heads
-
-        head_dim = args.hidden_size // n_heads
         self.scale = head_dim**-0.5
 
         self.q_proj = QuantizedLinear(dim, n_heads * head_dim, bias=False)
@@ -66,16 +49,10 @@ class Attention(nn.Module):
         self.v_proj = QuantizedLinear(dim, n_kv_heads * head_dim, bias=False)
         self.o_proj = QuantizedLinear(n_heads * head_dim, dim, bias=False)
 
-        rope_scale = (
-            1 / args.rope_scaling["factor"]
-            if args.rope_scaling is not None and args.rope_scaling["type"] == "linear"
-            else 1
-        )
         self.rope = nn.RoPE(
             head_dim,
             traditional=args.rope_traditional,
             base=args.rope_theta,
-            scale=rope_scale,
         )
 
     def __call__(
@@ -93,13 +70,6 @@ class Attention(nn.Module):
         keys = keys.reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
         values = values.reshape(B, L, self.n_kv_heads, -1).transpose(0, 2, 1, 3)
 
-        def repeat(a):
-            a = mx.concatenate([mx.expand_dims(a, 2)] * self.repeats, axis=2)
-            return a.reshape([B, self.n_heads, L, -1])
-
-        if self.repeats > 1:
-            keys, values = map(repeat, (keys, values))
-
         if cache is not None:
             key_cache, value_cache = cache
             queries = self.rope(queries, offset=key_cache.shape[2])
@@ -110,11 +80,11 @@ class Attention(nn.Module):
             queries = self.rope(queries)
             keys = self.rope(keys)
 
-        scores = (queries * self.scale) @ keys.transpose(0, 1, 3, 2)
-        if mask is not None:
-            scores += mask
-        scores = mx.softmax(scores.astype(mx.float32), axis=-1).astype(scores.dtype)
-        output = (scores @ values).transpose(0, 2, 1, 3).reshape(B, L, -1)
+        output = mx.fast.scaled_dot_product_attention(
+            queries, keys, values, scale=self.scale, mask=mask
+        )
+
+        output = output.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.o_proj(output), (keys, values)
 
 
@@ -126,7 +96,7 @@ class MLP(nn.Module):
         self.up_proj = QuantizedLinear(dim, hidden_dim, bias=False)
 
     def __call__(self, x) -> mx.array:
-        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj(nn.gelu(self.gate_proj(x)) * self.up_proj(x))
 
 
 class TransformerBlock(nn.Module):
@@ -153,7 +123,7 @@ class TransformerBlock(nn.Module):
         return out, cache
 
 
-class LlamaModel(nn.Module):
+class GemmaModel(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.args = args
@@ -172,6 +142,7 @@ class LlamaModel(nn.Module):
         cache=None,
     ):
         h = self.embed_tokens(inputs)
+        h = h * (self.args.hidden_size**0.5)
 
         mask = None
         if h.shape[1] > 1:
@@ -190,8 +161,8 @@ class LlamaModel(nn.Module):
 class Model(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
-        self.model = LlamaModel(args)
-        self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
+        self.model_type = args.model_type
+        self.model = GemmaModel(args)
 
     def __call__(
         self,
@@ -199,13 +170,8 @@ class Model(nn.Module):
         cache=None,
     ):
         out, cache = self.model(inputs, cache)
-        return self.lm_head(out), cache
-
-    def sanitize(self, weights):
-        # Remove unused precomputed rotary freqs
-        return {
-            k: v for k, v in weights.items() if "self_attn.rotary_emb.inv_freq" not in k
-        }
+        out = out @ self.model.embed_tokens.weight.T
+        return out, cache
 
     @property
     def layers(self):

@@ -245,3 +245,7 @@ class Model(nn.Module):
     ):
         out, cache = self.model(inputs, cache)
         return self.lm_head(out), cache
+
+    @property
+    def layers(self):
+        return self.model.layers

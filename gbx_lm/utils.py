@@ -11,7 +11,7 @@ from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, PreTrainedTokenizer, AutoConfig
 
 # Local imports
-from models import qphi2, qllama, qmixtral
+from models import qllama, qmixtral, qgemma, qqwen2
 from models.quantized_linear_gba import QuantizedLinear
 import re
 
@@ -20,7 +20,8 @@ MODEL_MAPPING = {
     "llama": qllama,
     "mistral": qllama,  # mistral is compatible with llama
     "mixtral": qmixtral,
-    "phi": qphi2,
+    "gemma": qgemma,
+    "qwen2": qqwen2
 }
 
 linear_class_predicate = (
@@ -73,11 +74,50 @@ def get_model_path(path_or_hf_repo: str, token=None) -> Path:
                     "*.py",
                     "tokenizer.model",
                     "*.tiktoken",
+                    "*.txt",
                 ],
                 token=token
             )
         )
     return model_path
+
+
+def top_p_sampling(logits: mx.array, top_p: float, temperature: float) -> mx.array:
+    """
+    Apply top-p (nucleus) sampling to logits.
+
+    Args:
+        logits: The logits from the model's output.
+        top_p: The cumulative probability threshold for top-p filtering.
+        temperature: Temperature parameter for softmax distribution reshaping.
+    Returns:
+        token selected based on the top-p criterion.
+    """
+    if (
+        logits.dtype == mx.bfloat16
+    ):  # workaround for unable to load kernel contiguous_scan_inclusive_sum_bfloat16_bfloat16
+        logits = logits.astype(mx.float32)
+
+    # referenced implementation from https://github.com/huggingface/transformers/blob/main/src/transformers/generation/logits_process.py#L449-L460
+    probs = mx.softmax(logits / temperature, axis=-1)
+
+    # sort probs in ascending order
+    sorted_indices = mx.argsort(probs, axis=-1)
+    sorted_probs = probs[..., sorted_indices.squeeze(0)]
+
+    cumulative_probs = mx.cumsum(sorted_probs, axis=-1)
+
+    # select tokens with cumulative probs below threshold
+    top_probs = mx.where(
+        cumulative_probs > 1 - top_p,
+        sorted_probs,
+        mx.zeros_like(sorted_probs),
+    )
+
+    sorted_token = mx.random.categorical(mx.log(top_probs))
+    token = sorted_indices.squeeze(0)[sorted_token]
+
+    return token
 
 
 def apply_repetition_penalty(logits: mx.array, generated_tokens: Any, penalty: float):
@@ -135,23 +175,7 @@ def generate_step(
             token = mx.argmax(logits, axis=-1)
         else:
             if top_p > 0 and top_p < 1.0:
-                if (
-                    logits.dtype == mx.bfloat16
-                ):  # workdaround for unable to load kernel contiguous_scan_inclusive_sum_bfloat16_bfloat16
-                    logits = logits.astype(mx.float32)
-                probs = mx.softmax(logits / temp, axis=-1)
-
-                sorted_probs = mx.sort(probs)[::-1]
-                sorted_indices = mx.argsort(probs)[::-1]
-                cumulative_probs = mx.cumsum(sorted_probs, axis=-1)
-
-                top_probs = mx.where(
-                    cumulative_probs > 1 - top_p,
-                    sorted_probs,
-                    mx.zeros_like(sorted_probs),
-                )
-                sorted_token = mx.random.categorical(mx.log(top_probs))
-                token = sorted_indices.squeeze(0)[sorted_token]
+                token = top_p_sampling(logits, top_p, temp)
             else:
                 token = mx.random.categorical(logits * (1 / temp))
 
@@ -229,6 +253,7 @@ def generate(
 
     tic = time.perf_counter()
     tokens = []
+    token_strings = []
     skip = 0
     REPLACEMENT_CHAR = "\ufffd"
 
@@ -243,27 +268,33 @@ def generate(
         ),
         range(max_tokens),
     ):
-        if token == tokenizer.eos_token_id:
-            break
+        token = token.item()
         if n == 0:
             prompt_time = time.perf_counter() - tic
             tic = time.perf_counter()
-        tokens.append(token.item())
+        if token == tokenizer.eos_token_id:
+            break
+        tokens.append(token)
 
         if verbose:
             s = tokenizer.decode(tokens)
             if formatter:
                 formatter(s[skip:], prob.item())
                 skip = len(s)
-            elif REPLACEMENT_CHAR not in s:
+            elif s[-1] != REPLACEMENT_CHAR:
                 print(s[skip:], end="", flush=True)
                 skip = len(s)
+            # Reset token cache at line break
+            if s[-1] == "\n":
+                tokens = []
+                token_strings.append(s)
+                skip = 0
 
-    token_count = len(tokens)
-    token_string = tokenizer.decode(tokens).replace(REPLACEMENT_CHAR, "")
+    token_count = n + 1
+    token_strings.append(tokenizer.decode(tokens).replace(REPLACEMENT_CHAR, ""))
 
     if verbose:
-        print(token_string[skip:], flush=True)
+        print(token_strings[-1][skip:], flush=True)
         gen_time = time.perf_counter() - tic
         print("=" * 10)
         if token_count == 0:
@@ -274,7 +305,7 @@ def generate(
         print(f"Prompt: {prompt_tps:.3f} tokens-per-sec")
         print(f"Generation: {gen_tps:.3f} tokens-per-sec")
 
-    return token_string
+    return "".join(token_strings)
 
 
 def get_parameter_usage_info(weights):
@@ -399,13 +430,11 @@ def load_model(model_path: Path, bits: int=4, group_size: int=64, is_conversion:
     ## ===================================================================##
 
     model_class, model_args_class = _get_classes(config=config)
-    if hasattr(model_class, "sanitize"):
-        weights = model_class.sanitize(weights)
 
     model_args = model_args_class.from_dict(config)
     model = model_class(model_args)
 
-    if hasattr(model, "sanitize"):
+    if  hasattr(model, "sanitize"):
         weights = model.sanitize(weights)
 
     # update QuantizedLinear layers using quantization parameters.
