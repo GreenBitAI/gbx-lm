@@ -4,7 +4,7 @@ from pathlib import Path
 from setuptools import setup
 
 package_dir = Path(__file__).parent / "gbx_lm"
-with open(package_dir / "requirements.txt") as fid:
+with open(Path(__file__).parent / "requirements.txt") as fid:
     requirements = [l.strip() for l in fid.readlines()]
 
 sys.path.append(str(package_dir))

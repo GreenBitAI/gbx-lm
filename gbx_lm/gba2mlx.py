@@ -10,7 +10,7 @@ import mlx.nn as nn
 import transformers
 from mlx.utils import tree_flatten
 
-from utils import get_model_path, load_model, extract_bits_and_group_size
+from .utils import get_model_path, load_model, extract_bits_and_group_size
 
 MAX_FILE_SIZE_GB = 5
 

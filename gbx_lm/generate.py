@@ -3,7 +3,7 @@ import argparse
 import mlx.core as mx
 import mlx.nn as nn
 from transformers import PreTrainedTokenizer
-from utils import load, generate
+from .utils import load, generate
 
 DEFAULT_MODEL_PATH = "mlx_model"
 DEFAULT_PROMPT = None

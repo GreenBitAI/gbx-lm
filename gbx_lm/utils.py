@@ -11,8 +11,8 @@ from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, PreTrainedTokenizer, AutoConfig
 
 # Local imports
-from models import qllama, qmixtral, qgemma, qqwen2
-from models.quantized_linear_gba import QuantizedLinear
+from .models import qllama, qmixtral, qgemma, qqwen2
+from .models.quantized_linear_gba import QuantizedLinear
 import re
 
 # Constants
