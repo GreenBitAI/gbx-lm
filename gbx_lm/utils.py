@@ -220,7 +220,7 @@ def generate(
     model: nn.Module,
     tokenizer: PreTrainedTokenizer,
     prompt: str,
-    temp: float = 0.0,
+    temp: float = 0.6,
     max_tokens: int = 100,
     verbose: bool = False,
     formatter: Optional[Callable] = None,
