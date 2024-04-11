@@ -22,6 +22,6 @@ setup(
     url="https://github.com/GreenBitAI/gbx-lm",
     license="Apache-2.0",
     install_requires=requirements,
-    packages=["gbx_lm", "gbx_lm.models"],
+    packages=["gbx_lm", "gbx_lm.models", "gbx_lm.serve"],
     python_requires=">=3.9",
 )
