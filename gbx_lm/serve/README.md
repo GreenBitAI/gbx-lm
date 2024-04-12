@@ -67,5 +67,5 @@ pip install gradio
 Upon completing these steps, the worker should be operational and accessible via a local URL: http://0.0.0.0:7860. Open this URL in your preferred web browser to begin interacting with your local MLX LLM. Enjoy your conversations!
 
 ## License
-- `mlx_worker.py` released under the [Apache 2.0 License](https://github.com/lm-sys/FastChat/tree/main/LICENSE) in [FastChat repo](https://github.com/lm-sys/FastChat).
+- `mlx_worker.py` released under the [Apache 2.0 License](https://github.com/lm-sys/FastChat/tree/main/LICENSE) in [FastChat-serve](https://github.com/lm-sys/FastChat/tree/main/fastchat/serve).
 - We release our changes and additions to these files under the [Apache 2.0 License](../../LICENSE).
