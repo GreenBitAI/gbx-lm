@@ -56,6 +56,10 @@ It will download and run the local model to generate natural language content th
 python -m gbx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tokens 100 --prompt "calculate 4*8+1024=" --eos-token '<|im_end|>'
 ```
 
+## Web Demo
+We also prepared a demo for deploying chat applications by leveraging the capabilities of FastChat and Gradio.
+Please follow [this page](https://github.com/GreenBitAI/gbx-lm/tree/main/gbx_lm/serve). You can quickly build a local chat page according to our introduction.
+
 ## License
 The original code was released under its respective license and copyrights, i.e.:
 
