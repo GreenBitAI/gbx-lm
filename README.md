@@ -2,7 +2,7 @@
 # GBA Model Toolkit for MLX
 
 ## Introduction
-Welcome to the GreenBitAI (GBA) Model Toolkit for [MLX](https://github.com/ml-explore/mlx)! This comprehensive Python package not only facilitates the conversion of [GreenBitAI's Low-bit Language Models (LLMs)](https://huggingface.co/GreenBitAI) to MLX framework compatible format but also supports generation, model loading, and other essential scripts tailored for GBA quantized models. Designed to enhance the integration and deployment of GBA models within the MLX ecosystem, this toolkit enables the efficient execution of GBA models on a variety of platforms, with special optimizations for Apple devices to enable local inference and natural language content generation. 
+Welcome to the GreenBitAI (GBA) Model Toolkit for [MLX](https://github.com/ml-explore/mlx)! This comprehensive Python package not only facilitates the conversion of [GreenBitAI's Low-bit Language Models (LLMs)](https://huggingface.co/collections/GreenBitAI/greenbitai-mlx-llm-6614eb6ceb8da657c2b4ed58) to MLX framework compatible format but also supports generation, model loading, and other essential scripts tailored for GBA quantized models. Designed to enhance the integration and deployment of GBA models within the MLX ecosystem, this toolkit enables the efficient execution of GBA models on a variety of platforms, with special optimizations for Apple devices to enable local inference and natural language content generation. 
 
 ## Features
 
@@ -46,7 +46,7 @@ python -m gbx_lm.generate --model <path to a converted model or a Hugging Face r
 - See `requirements.txt` or `environment.yml` for a complete list of dependencies
 
 ## Examples
-In this example, the pretrained 4-bit model "yi-6b-chat-w4a16g128" will be downloaded from [GreenBitAI's Hugging Face repository](https://huggingface.co/GreenBitAI) and converted into mlx compatible format, and saved in the local directory "yi-6b-chat-w4a16g128-mlx".
+In this example, the pretrained 4-bit model "yi-6b-chat-w4a16g128" will be downloaded from [GreenBitAI's Hugging Face repository](https://huggingface.co/collections/GreenBitAI/greenbitai-mlx-llm-6614eb6ceb8da657c2b4ed58) and converted into mlx compatible format, and saved in the local directory "yi-6b-chat-w4a16g128-mlx".
 We can also use the "--upload-repo" parameter to provide a Hugging Face repo URL with valid write permissions. This will directly upload the model converted and saved locally to this Hugging Face repo. 
 ```bash
 python -m gbx_lm.gba2mlx --hf-path GreenBitAI/yi-6b-chat-w4a16g128 --mlx-path yi-6b-chat-w4a16g128-mlx/ --hf-token <your huggingface token> --upload-repo GreenBitAI/yi-6b-chat-w4a16g128-mlx
@@ -58,7 +58,7 @@ python -m gbx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tok
 
 ## Web Demo
 We also prepared a demo for deploying chat applications by leveraging the capabilities of FastChat and Gradio.
-Please follow [this page](https://github.com/GreenBitAI/gbx-lm/tree/main/gbx_lm/serve). You can quickly build a local chat page according to our introduction.
+By following this [instruction](https://github.com/GreenBitAI/gbx-lm/tree/main/gbx_lm/serve), you can quickly build a local chat demo page.
 
 ## License
 The original code was released under its respective license and copyrights, i.e.:
