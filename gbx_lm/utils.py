@@ -11,7 +11,7 @@ from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, PreTrainedTokenizer, AutoConfig
 
 # Local imports
-from .models import qllama, qmixtral, qgemma, qqwen2
+from .models import qllama, qmixtral, qgemma, qqwen2, qphi3
 from .models.quantized_linear_gba import QuantizedLinear
 import re
 
@@ -21,7 +21,8 @@ MODEL_MAPPING = {
     "mistral": qllama,  # mistral is compatible with llama
     "mixtral": qmixtral,
     "gemma": qgemma,
-    "qwen2": qqwen2
+    "qwen2": qqwen2,
+    "phi3": qphi3
 }
 
 linear_class_predicate = (
