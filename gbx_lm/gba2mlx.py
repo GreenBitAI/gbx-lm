@@ -80,7 +80,7 @@ def fetch_from_hub(
     parameters.
     """
     model_path = get_model_path(model_path, token=token)
-    config = transformers.AutoConfig.from_pretrained(model_path, token=token)
+    config = transformers.AutoConfig.from_pretrained(model_path, token=token, trust_remote_code=True)
 
     # Building tokenizer_config
     tokenizer_config = {"token": token, "trust_remote_code": True}

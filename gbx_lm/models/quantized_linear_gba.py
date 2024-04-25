@@ -228,10 +228,13 @@ class QuantizedLinear(Module):
                     layer_number = name.split('.')[2]
                     strategy_per_block = strategy["model.layers.{}".format(layer_number)]
 
-                    for key in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj']:
+                    for key in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'qkv_proj', 'gate_up_proj']:
                         if key in name:
-                            strg = strategy_per_block[key]
-                            break
+                            try:
+                                strg = strategy_per_block[key]
+                                break
+                            except KeyError:
+                                pass
                     child.bits = strg["bits"][0]
                     child.group_size = strg["group_size"][str(child.bits)]
                     assert child.group_size in [32, 64, 128], f"The group size value ({child.group_size}) must be 32, 64 or 128."
