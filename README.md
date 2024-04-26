@@ -57,6 +57,9 @@ python -m gbx_lm.generate --model GreenBitAI/yi-6b-chat-w4a16g128-mlx  --max-tok
 ```
 
 ## Web Demo
+
+<img src="assets/web_chat_demo_mlx.gif" width="960">
+
 We also prepared a demo for deploying chat applications by leveraging the capabilities of FastChat and Gradio.
 By following this [instruction](https://github.com/GreenBitAI/gbx-lm/tree/main/gbx_lm/serve), you can quickly build a local chat demo page.
 

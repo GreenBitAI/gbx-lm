@@ -4,6 +4,10 @@
 
 This project demonstrates a quick setup for a chat interface using [GreenBitAI's MLX model](https://huggingface.co/collections/GreenBitAI/greenbitai-mlx-llm-6614eb6ceb8da657c2b4ed58), [FastChat](https://github.com/lm-sys/FastChat) tool, and Gradio web UI. It enables conversations using a local model creating an efficient and accessible environment for deploying chat applications by leveraging the capabilities of FastChat and Gradio.
 
+
+<img src="../../assets/web_chat_demo_mlx.gif" width="960">
+
+
 ## Installation
 
 Installation involves two main steps: setting up the gbx_lm package and installing FastChat along with its dependencies.
