@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 package_dir = Path(__file__).parent / "gbx_lm"
 with open(Path(__file__).parent / "requirements.txt") as fid:
@@ -22,6 +22,6 @@ setup(
     url="https://github.com/GreenBitAI/gbx-lm",
     license="Apache-2.0",
     install_requires=requirements,
-    packages=["gbx_lm", "gbx_lm.models", "gbx_lm.serve"],
+    packages=find_packages(),
     python_requires=">=3.9",
 )

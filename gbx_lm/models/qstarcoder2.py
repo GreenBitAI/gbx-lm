@@ -15,45 +15,30 @@ class ModelArgs(BaseModelArgs):
     num_hidden_layers: int
     intermediate_size: int
     num_attention_heads: int
-    head_dim: int
-    rms_norm_eps: float
-    vocab_size: int
     num_key_value_heads: int
-    rope_theta: float = 10000
-    rope_traditional: bool = False
-
-
-class RMSNorm(nn.Module):
-    def __init__(self, dims: int, eps: float = 1e-5):
-        super().__init__()
-        self.weight = mx.ones((dims,))
-        self.eps = eps
-
-    def __call__(self, x):
-        return mx.fast.rms_norm(x, 1.0 + self.weight, self.eps)
+    norm_epsilon: float = 1e-5
+    vocab_size: int = 49152
+    rope_theta: float = 100000
+    tie_word_embeddings: bool = True
 
 
 class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
+        self.args = args
 
         dim = args.hidden_size
         self.n_heads = n_heads = args.num_attention_heads
         self.n_kv_heads = n_kv_heads = args.num_key_value_heads
-        self.head_dim = head_dim = args.head_dim
 
+        head_dim = args.hidden_size // args.num_attention_heads
         self.scale = head_dim**-0.5
 
-        self.q_proj = QuantizedLinear(dim, n_heads * head_dim, bias=False)
-        self.k_proj = QuantizedLinear(dim, n_kv_heads * head_dim, bias=False)
-        self.v_proj = QuantizedLinear(dim, n_kv_heads * head_dim, bias=False)
-        self.o_proj = QuantizedLinear(n_heads * head_dim, dim, bias=False)
-
-        self.rope = nn.RoPE(
-            head_dim,
-            traditional=args.rope_traditional,
-            base=args.rope_theta,
-        )
+        self.q_proj = QuantizedLinear(dim, n_heads * head_dim, bias=True)
+        self.k_proj = QuantizedLinear(dim, n_kv_heads * head_dim, bias=True)
+        self.v_proj = QuantizedLinear(dim, n_kv_heads * head_dim, bias=True)
+        self.o_proj = QuantizedLinear(n_heads * head_dim, dim, bias=True)
+        self.rope = nn.RoPE(head_dim, traditional=False, base=args.rope_theta)
 
     def __call__(
         self,
@@ -89,23 +74,25 @@ class Attention(nn.Module):
 class MLP(nn.Module):
     def __init__(self, dim, hidden_dim):
         super().__init__()
-        self.gate_proj = QuantizedLinear(dim, hidden_dim, bias=False)
-        self.down_proj = QuantizedLinear(hidden_dim, dim, bias=False)
-        self.up_proj = QuantizedLinear(dim, hidden_dim, bias=False)
+        self.c_fc = QuantizedLinear(dim, hidden_dim, bias=True)
+        self.c_proj = QuantizedLinear(hidden_dim, dim, bias=True)
 
-    def __call__(self, x) -> mx.array:
-        return self.down_proj(nn.gelu(self.gate_proj(x)) * self.up_proj(x))
+    def __call__(self, x):
+        return self.c_proj(nn.gelu(self.c_fc(x)))
 
 
 class TransformerBlock(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
-        self.num_attention_heads = args.num_attention_heads
         self.hidden_size = args.hidden_size
+        self.n_heads = args.num_attention_heads
+
         self.self_attn = Attention(args)
         self.mlp = MLP(args.hidden_size, args.intermediate_size)
-        self.input_layernorm = RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+        self.input_layernorm = nn.LayerNorm(args.hidden_size, eps=args.norm_epsilon)
+        self.post_attention_layernorm = nn.LayerNorm(
+            args.hidden_size, eps=args.norm_epsilon
+        )
         self.args = args
 
     def __call__(
@@ -121,7 +108,7 @@ class TransformerBlock(nn.Module):
         return out
 
 
-class GemmaModel(nn.Module):
+class Starcoder2Model(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.args = args
@@ -132,7 +119,7 @@ class GemmaModel(nn.Module):
         self.layers = [
             TransformerBlock(args=args) for _ in range(args.num_hidden_layers)
         ]
-        self.norm = RMSNorm(args.hidden_size, eps=args.rms_norm_eps)
+        self.norm = nn.LayerNorm(args.hidden_size, eps=args.norm_epsilon)
 
     def __call__(
         self,
@@ -140,7 +127,6 @@ class GemmaModel(nn.Module):
         cache=None,
     ):
         h = self.embed_tokens(inputs)
-        h = h * (self.args.hidden_size**0.5)
 
         mask = None
         if h.shape[1] > 1:
@@ -159,9 +145,11 @@ class GemmaModel(nn.Module):
 class Model(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
-        self.model_type = args.model_type
-        self.model = GemmaModel(args)
         self.args = args
+        self.model_type = args.model_type
+        self.model = Starcoder2Model(args)
+        if not args.tie_word_embeddings:
+            self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
 
     def __call__(
         self,
@@ -169,7 +157,10 @@ class Model(nn.Module):
         cache=None,
     ):
         out = self.model(inputs, cache)
-        out = self.model.embed_tokens.as_linear(out)
+        if self.args.tie_word_embeddings:
+            out = self.model.embed_tokens.as_linear(out)
+        else:
+            out = self.lm_head(out)
         return out
 
     @property
@@ -178,7 +169,7 @@ class Model(nn.Module):
 
     @property
     def head_dim(self):
-        return self.args.head_dim
+        return self.args.hidden_size // self.args.num_attention_heads
 
     @property
     def n_kv_heads(self):
