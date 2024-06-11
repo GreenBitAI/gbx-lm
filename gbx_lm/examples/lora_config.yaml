@@ -1,10 +1,10 @@
 # The path to the local model directory or Hugging Face repo.
-model: "mlx_model"
+model: "GreenBitAI/Qwen-1.5-0.5B-Chat-layer-mix-bpw-2.5-mlx"
 # Whether or not to train (boolean)
 train: true
 
 # Directory with {train, valid, test}.jsonl files
-data: "/path/to/training/data"
+data: "datasets/wikisql"
 
 # The PRNG seed
 seed: 0
@@ -16,7 +16,7 @@ lora_layers: 16
 batch_size: 4
 
 # Iterations to train for.
-iters: 1000
+iters: 20
 
 # Number of validation batches, -1 uses the entire validation set.
 val_batches: 25
@@ -25,10 +25,10 @@ val_batches: 25
 learning_rate: 1e-5
 
 # Number of training steps between loss reporting.
-steps_per_report: 10
+steps_per_report: 2
 
 # Number of training steps between validations.
-steps_per_eval: 200
+steps_per_eval: 2
 
 # Load path to resume training with the given adapter weights.
 resume_adapter_file: null
@@ -37,19 +37,22 @@ resume_adapter_file: null
 adapter_path: "adapters"
 
 # Save the model every N iterations.
-save_every: 100
+save_every: 2
 
 # Evaluate on the test set after training
-test: false
+test: True
 
 # Number of test set batches, -1 uses the entire test set.
-test_batches: 100
+test_batches: 25
 
 # Maximum sequence length.
 max_seq_length: 2048
 
 # Use gradient checkpointing to reduce memory use.
 grad_checkpoint: false
+
+# Use DoRA instead of LoRA.
+use_dora: false
 
 # LoRA parameters can only be specified in a config file
 lora_parameters:

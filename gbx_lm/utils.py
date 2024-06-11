@@ -1,8 +1,12 @@
+# Initial code base from https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm under the MIT License.
+# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
+
+
 import glob
 import json
 import logging
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Generator, Optional, Tuple, Union
 import time
 
 import mlx.core as mx
@@ -285,7 +289,6 @@ def generate(
         ),
         range(max_tokens),
     ):
-        token = token.item()
         if n == 0:
             prompt_time = time.perf_counter() - tic
             tic = time.perf_counter()

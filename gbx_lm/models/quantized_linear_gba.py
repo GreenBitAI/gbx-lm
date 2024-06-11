@@ -290,3 +290,27 @@ class QuantizedLinear(Module):
         leaves = model.leaf_modules()
         leaves = tree_map(_run_if_q_gba_linear, leaves, is_leaf=Module.is_module)
         model.update_modules(leaves)
+
+
+    @classmethod
+    def from_linear(cls, linear_layer: Module, group_size: int = 64, bits: int = 4, q_perm = None, channel_scale = None):
+        """Create a QuantizedLinear layer from the parameters of a provided
+        linear layer."""
+        output_dims, input_dims = linear_layer.weight.shape
+        ql = cls(input_dims, output_dims, False, group_size, bits)
+
+        if q_perm is not None:
+            q_perm = q_perm.reshape(-1, 1)
+            weight = mx.take_along_axis(linear_layer.weight, q_perm, axis=0)
+            ql.q_perm = q_perm.reshape(1, 1, -1) # prepare shape for inference
+
+        if channel_scale is not None:
+            ql.channel_scale = channel_scale
+
+        ql.qweight, ql.scales, ql.zeros = mx.quantize(
+            weight, group_size, bits
+        )
+        if "bias" in linear_layer:
+            ql.bias = linear_layer.bias
+
+        return ql

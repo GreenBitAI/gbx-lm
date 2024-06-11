@@ -1,4 +1,6 @@
-# Copyright © 2024 Apple Inc.
+# Initial code base from https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm under the MIT License.
+# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
+
 
 import argparse
 import math
@@ -15,7 +17,8 @@ from mlx.utils import tree_flatten
 from .tuner.datasets import load_dataset
 from .tuner.trainer import TrainingArgs, TrainingCallback, evaluate, train
 from .tuner.utils import apply_lora_layers, build_schedule, linear_to_lora_layers
-from .utils import load, save_config
+from .utils import load
+from .gba2mlx import save_config
 
 yaml_loader = yaml.SafeLoader
 yaml_loader.add_implicit_resolver(
@@ -54,6 +57,7 @@ CONFIG_DEFAULTS = {
     "max_seq_length": 2048,
     "lr_schedule": None,
     "lora_parameters": {"rank": 8, "alpha": 16, "dropout": 0.0, "scale": 10.0},
+    "use_dora": False,
 }
 
 
@@ -69,6 +73,7 @@ def build_parser():
         "--train",
         action="store_true",
         help="Do training",
+        default=None,
     )
     parser.add_argument(
         "--data",
@@ -78,7 +83,7 @@ def build_parser():
     parser.add_argument(
         "--lora-layers",
         type=int,
-        help="Number of layers to fine-tune",
+        help="Number of layers to fine-tune. Default is 16, use -1 for all.",
     )
     parser.add_argument("--batch-size", type=int, help="Minibatch size.")
     parser.add_argument("--iters", type=int, help="Iterations to train for.")
@@ -117,6 +122,7 @@ def build_parser():
         "--test",
         action="store_true",
         help="Evaluate on the test set after training",
+        default=None,
     )
     parser.add_argument(
         "--test-batches",
@@ -138,8 +144,12 @@ def build_parser():
         "--grad-checkpoint",
         action="store_true",
         help="Use gradient checkpointing to reduce memory use.",
+        default=None,
     )
-    parser.add_argument("--seed", type=int, default=0, help="The PRNG seed")
+    parser.add_argument("--seed", type=int, default=None, help="The PRNG seed")
+    parser.add_argument(
+        "--use-dora", action="store_true", default=None, help="Use DoRA to finetune."
+    )
     return parser
 
 
@@ -175,16 +185,20 @@ def run(args, training_callback: TrainingCallback = None):
     adapter_file = adapter_path / "adapters.safetensors"
 
     if args.test and not args.train:
-        apply_lora_layers(model, adapter_path)
-
-    else:
+        # Allow testing without LoRA layers by providing empty path
+        if args.adapter_path != "":
+            apply_lora_layers(model, adapter_path)
+    elif args.train:
         adapter_path.mkdir(parents=True, exist_ok=True)
         save_config(vars(args), adapter_path / "adapter_config.json")
 
         # Convert linear layers to lora layers and unfreeze in the process
-        linear_to_lora_layers(model, args.lora_layers, args.lora_parameters)
-
+        linear_to_lora_layers(
+            model, args.lora_layers, args.lora_parameters, args.use_dora
+        )
         print_trainable_parameters(model)
+    else:
+        raise ValueError("Must provide at least one of --train or --test")
 
     print("Loading datasets")
     train_set, valid_set, test_set = load_dataset(args, tokenizer)
@@ -257,12 +271,12 @@ def main():
             config = yaml.load(file, yaml_loader)
         # Prefer parameters from command-line arguments
         for k, v in config.items():
-            if not args.get(k, None):
+            if args.get(k, None) is None:
                 args[k] = v
 
     # Update defaults for unspecified parameters
     for k, v in CONFIG_DEFAULTS.items():
-        if not args.get(k, None):
+        if args.get(k, None) is None:
             args[k] = v
     run(types.SimpleNamespace(**args))
 

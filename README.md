@@ -66,5 +66,5 @@ By following this [instruction](https://github.com/GreenBitAI/gbx-lm/tree/main/g
 ## License
 The original code was released under its respective license and copyrights, i.e.:
 
-- `gba2mlx.py`, `generate.py`, `utils.py` and `models/*.py` released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-examples](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm).
+- `generate.py`, `lora.py`, `*utils.py`, `tuner/*.py` and `models/*.py` released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-examples](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm).
 - We release our changes and additions to these files under the [Apache 2.0 License](LICENSE).
