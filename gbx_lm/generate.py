@@ -1,3 +1,7 @@
+# Initial code base from https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm under the MIT License.
+# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
+
+
 import argparse
 
 import mlx.core as mx
@@ -22,6 +26,11 @@ def setup_arg_parser():
         type=str,
         default="mlx_model",
         help="The path to the local model directory or Hugging Face repo.",
+    )
+    parser.add_argument(
+        "--adapter-path",
+        type=str,
+        help="Optional path for the trained adapter weights and config.",
     )
     parser.add_argument(
         "--trust-remote-code",
@@ -65,6 +74,13 @@ def setup_arg_parser():
         "--colorize",
         action="store_true",
         help="Colorize output based on T[0] probability",
+    )
+    parser.add_argument(
+        "--cache-limit-gb",
+        type=int,
+        default=None,
+        help="Set the MLX cache limit in GB",
+        required=False,
     )
     return parser
 
@@ -125,13 +141,16 @@ def do_generate(args, model: nn.Module, tokenizer: PreTrainedTokenizer, prompt: 
 def main(args):
     mx.random.seed(args.seed)
 
+    if args.cache_limit_gb is not None:
+        mx.metal.set_cache_limit(args.cache_limit_gb * 1024 * 1024 * 1024)
+
     # Building tokenizer_config
     tokenizer_config = {"trust_remote_code": True if args.trust_remote_code else None}
     if args.eos_token is not None:
         tokenizer_config["eos_token"] = args.eos_token
 
     model, tokenizer = load(
-        args.model, tokenizer_config=tokenizer_config
+        args.model, adapter_path=args.adapter_path, tokenizer_config=tokenizer_config
     )
 
     if args.use_default_chat_template:
