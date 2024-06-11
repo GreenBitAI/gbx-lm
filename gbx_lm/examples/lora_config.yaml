@@ -1,5 +1,5 @@
 # The path to the local model directory or Hugging Face repo.
-model: "GreenBitAI/Qwen-1.5-0.5B-Chat-layer-mix-bpw-2.5-mlx"
+model: "GreenBitAI/Phi-3-mini-128k-instruct-layer-mix-bpw-2.2-mlx"
 # Whether or not to train (boolean)
 train: true
 
@@ -34,10 +34,10 @@ steps_per_eval: 2
 resume_adapter_file: null
 
 # Save/load path for the trained adapter weights.
-adapter_path: "adapters"
+adapter_path: "adapters/Phi-3-mini-128k-instruct-layer-mix-bpw-2.2-mlx"
 
 # Save the model every N iterations.
-save_every: 2
+save_every: 5
 
 # Evaluate on the test set after training
 test: True
@@ -58,7 +58,8 @@ use_dora: false
 lora_parameters:
   # The layer keys to apply LoRA to.
   # These will be applied for the last lora_layers
-  keys: ["self_attn.q_proj", "self_attn.v_proj"]
+#  keys: ["self_attn.q_proj", "self_attn.v_proj"]   # "mistral","llama","phi","mixtral","stablelm","qwen2","qwen2_moe","gemma","starcoder2","cohere","minicpm"
+  keys: ["self_attn.qkv_proj"]  # "phi3"
   rank: 8
   alpha: 16.0
   scale: 10.0

@@ -103,8 +103,7 @@ def linear_to_lora_layers(
         "gemma",
         "starcoder2",
         "cohere",
-        "minicpm",
-        "phi3"
+        "minicpm"
     ]:
         keys = set(["self_attn.q_proj", "self_attn.v_proj"])
         if model.model_type == "mixtral":
