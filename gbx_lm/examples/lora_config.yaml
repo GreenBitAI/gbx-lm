@@ -1,5 +1,8 @@
 # The path to the local model directory or Hugging Face repo.
-model: "GreenBitAI/Phi-3-mini-128k-instruct-layer-mix-bpw-2.2-mlx"
+#model: "GreenBitAI/Phi-3-mini-128k-instruct-layer-mix-bpw-2.2-mlx"
+model: "GreenBitAI/Llama-3-8B-layer-mix-bpw-2.2-mlx"
+#model: "GreenBitAI/Qwen-1.5-0.5B-Chat-layer-mix-bpw-2.5-mlx"
+
 # Whether or not to train (boolean)
 train: true
 
@@ -10,10 +13,10 @@ data: "datasets/wikisql"
 seed: 0
 
 # Number of layers to fine-tune
-lora_layers: 16
+lora_layers: 8
 
 # Minibatch size.
-batch_size: 4
+batch_size: 1
 
 # Iterations to train for.
 iters: 20
@@ -58,8 +61,8 @@ use_dora: false
 lora_parameters:
   # The layer keys to apply LoRA to.
   # These will be applied for the last lora_layers
-#  keys: ["self_attn.q_proj", "self_attn.v_proj"]   # "mistral","llama","phi","mixtral","stablelm","qwen2","qwen2_moe","gemma","starcoder2","cohere","minicpm"
-  keys: ["self_attn.qkv_proj"]  # "phi3"
+  keys: ["self_attn.q_proj", "self_attn.v_proj"]   # "mistral","llama","phi","mixtral","stablelm","qwen2","qwen2_moe","gemma","starcoder2","cohere","minicpm"
+#  keys: ["self_attn.qkv_proj"]  # "phi3"
   rank: 8
   alpha: 16.0
   scale: 10.0

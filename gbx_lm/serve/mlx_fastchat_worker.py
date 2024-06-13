@@ -14,7 +14,7 @@ import argparse
 import asyncio
 import atexit
 import json
-from typing import List
+from typing import List, Optional
 import uuid
 
 from fastapi import FastAPI, Request, BackgroundTasks
@@ -49,7 +49,7 @@ class MLXWorker(BaseModelWorker):
         conv_template: str,
         trust_remote_code: True or None = None,
         eos_token: str = None,
-        adapter_file: str = ""
+        adapter_file: Optional[str] = None,
     ):
         super().__init__(
             controller_addr,
@@ -73,7 +73,7 @@ class MLXWorker(BaseModelWorker):
             tokenizer_config["eos_token"] = eos_token
 
         self.mlx_model, self.mlx_tokenizer = load(
-            model_path, adapter_file=adapter_file, tokenizer_config=tokenizer_config
+            model_path, adapter_path=adapter_file, tokenizer_config=tokenizer_config
         )
 
         self.tokenizer = self.mlx_tokenizer
@@ -118,52 +118,42 @@ class MLXWorker(BaseModelWorker):
 
         print("Stop patterns: ", stop)
 
-        top_p = max(top_p, 1e-5)
-        if temperature <= 1e-5:
-            top_p = 1.0
-
-        tokens = []
-        skip = 0
-
         context_mlx = mx.array(self.tokenizer.encode(context))
 
         finish_reason = "length"
+
+        detokenizer = self.tokenizer.detokenizer
+        detokenizer.reset()
 
         iterator = await run_in_threadpool(
             generate_step, context_mlx, self.mlx_model, temperature
         )
 
         for i in range(max_new_tokens):
-            (token, _) = await run_in_threadpool(next, iterator)
+            (token, prob) = await run_in_threadpool(next, iterator)
             if token == self.mlx_tokenizer.eos_token_id:
                 finish_reason = "stop"
                 break
-            tokens.append(token.item())
-            tokens_decoded = self.mlx_tokenizer.decode(tokens)
-            last_token_decoded = self.mlx_tokenizer.decode([token.item()])
-            skip = len(tokens_decoded)
 
-            partial_stop = any(is_partial_stop(tokens_decoded, i) for i in stop)
-
-            if partial_stop:
-                finish_reason = "stop"
-                break
+            detokenizer.add_token(token)
 
             ret = {
-                "text": tokens_decoded,
+                "text": detokenizer.text,
                 "error_code": 0,
                 "usage": {
                     "prompt_tokens": len(context),
-                    "completion_tokens": len(tokens),
-                    "total_tokens": len(context) + len(tokens),
+                    "completion_tokens": len(detokenizer.tokens),
+                    "total_tokens": len(context) + len(detokenizer.tokens),
                 },
                 "cumulative_logprob": [],
                 "finish_reason": None,  # hard code for now
             }
-            # print(ret)
+
             yield (json.dumps(ret) + "\0").encode()
+
+        detokenizer.finalize()
         ret = {
-            "text": self.mlx_tokenizer.decode(tokens),
+            "text": detokenizer.text,
             "error_code": 0,
             "usage": {},
             "cumulative_logprob": [],
