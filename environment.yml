@@ -7,7 +7,11 @@ dependencies:
   - pip=24.0
   - pytorch::pytorch>=2.0
   - pip:
-      - mlx>=0.6
+      - mlx>=0.14
+      - numpy
+      - protobuf
       - sentencepiece
       - huggingface_hub
-      - transformers>=4.38.0
+      - transformers>=4.39.3
+      - pyyaml
+      - jinja2
