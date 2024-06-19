@@ -27,7 +27,6 @@ from fastchat.serve.model_worker import (
     logger,
     worker_id,
 )
-from fastchat.utils import get_context_length, is_partial_stop
 
 import mlx.core as mx
 from gbx_lm import load, generate_step
@@ -89,19 +88,14 @@ class MLXWorker(BaseModelWorker):
 
         context = params.pop("prompt")
         request_id = params.pop("request_id")
-        temperature = float(params.get("temperature", 1.0))
+        temperature = float(params.get("temperature", 0.6))
         top_p = float(params.get("top_p", 1.0))
-        top_k = params.get("top_k", -1.0)
-        presence_penalty = float(params.get("presence_penalty", 0.0))
         frequency_penalty = float(params.get("frequency_penalty", 0.0))
         max_new_tokens = params.get("max_new_tokens", 256)
         stop_str = params.get("stop", None)
         stop_token_ids = params.get("stop_token_ids", None) or []
         if self.tokenizer.eos_token_id is not None:
             stop_token_ids.append(self.tokenizer.eos_token_id)
-        echo = params.get("echo", True)
-        use_beam_search = params.get("use_beam_search", False)
-        best_of = params.get("best_of", None)
 
         # Handle stop_str
         stop = set()
@@ -117,7 +111,6 @@ class MLXWorker(BaseModelWorker):
                     stop.add(s)
 
         print("Stop patterns: ", stop)
-
         context_mlx = mx.array(self.tokenizer.encode(context))
 
         finish_reason = "length"
@@ -126,7 +119,8 @@ class MLXWorker(BaseModelWorker):
         detokenizer.reset()
 
         iterator = await run_in_threadpool(
-            generate_step, context_mlx, self.mlx_model, temperature
+            generate_step, context_mlx, self.mlx_model, temperature,
+            frequency_penalty, 20, top_p
         )
 
         for i in range(max_new_tokens):
