@@ -197,10 +197,10 @@ class Model(nn.Module):
     ):
         out = self.model(inputs, cache)
         if self.args.tie_word_embeddings:
-            out = self.model.embed_tokens.as_linear(out)
+            lm_out = self.model.embed_tokens.as_linear(out)
         else:
-            out = self.lm_head(out)
-        return out
+            lm_out = self.lm_head(out)
+        return lm_out, out
 
     def sanitize(self, weights):
         # Remove unused precomputed rotary freqs
