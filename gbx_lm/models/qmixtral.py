@@ -1,12 +1,16 @@
+# Copyright © 2023-2024 Apple Inc.
+# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
+
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple, Union
 
 import mlx.core as mx
 import mlx.nn as nn
 
-from .base import BaseModelArgs
+from .base import BaseModelArgs, create_attention_mask
 from .quantized_linear_gba import QuantizedLinear
 from .switch_layers import SwitchGLU
+
 
 @dataclass
 class ModelArgs(BaseModelArgs):
@@ -163,11 +167,7 @@ class MixtralModel(nn.Module):
     ):
         h = self.embed_tokens(inputs)
 
-        mask = None
-        T = h.shape[1]
-        if T > 1:
-            mask = nn.MultiHeadAttention.create_additive_causal_mask(T)
-            mask = mask.astype(h.dtype)
+        mask = create_attention_mask(h, cache)
 
         if cache is None:
             cache = [None] * len(self.layers)
@@ -201,11 +201,13 @@ class Model(nn.Module):
             prefix = f"model.layers.{l}"
             for n, m in [("w1", "gate_proj"), ("w2", "down_proj"), ("w3", "up_proj")]:
                 for k in ["weight", "scales", "biases"]:
-                    to_join = [
-                        weights.pop(f"{prefix}.block_sparse_moe.experts.{e}.{n}.{k}")
-                        for e in range(self.args.num_local_experts)
-                    ]
-                    if to_join:
+                    if f"{prefix}.block_sparse_moe.experts.0.{n}.{k}" in weights:
+                        to_join = [
+                            weights.pop(
+                                f"{prefix}.block_sparse_moe.experts.{e}.{n}.{k}"
+                            )
+                            for e in range(self.args.num_local_experts)
+                        ]
                         weights[f"{prefix}.block_sparse_moe.switch_mlp.{m}.{k}"] = (
                             mx.stack(to_join)
                         )

@@ -10,7 +10,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Initial commit
 
-
 ## [0.2.0] - 2024/22/04
 
 ### Added
@@ -19,13 +18,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Generation: Includes scripts for generating content using GBA quantized models within the MLX environment, empowering users to leverage the advanced capabilities of GBA models for natural language content creation.
 - Fully support [GreenBitAI's MLX Model Collection](https://huggingface.co/collections/GreenBitAI/greenbitai-mlx-llm-6614eb6ceb8da657c2b4ed58)
 
-
 ## [0.2.1] - 2024/01/05
 
 ### Added
 
 - support for Phi-3
-
 
 ## [0.3.0] - 2024/11/06
 
@@ -33,10 +30,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Lora support for GBA low-bit models.
 
-
 ## [0.3.1] - 2024/14/06
 
 ### Updated
 
 - updated mlx_fastchat_worker for supporting mlx >= 0.14.
 - updated conda config.
+
+## [0.3.2] - 2024/09/09
+
+### Added
+
+- model management, FastAPI-server
+- unit test
+
+### Updated
+
+- synchronized with the mlx-lm
+- simplified README

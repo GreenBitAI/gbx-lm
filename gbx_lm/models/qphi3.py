@@ -1,10 +1,14 @@
+# Copyright © 2023-2024 Apple Inc.
+# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
+
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import mlx.core as mx
 import mlx.nn as nn
 
-from .base import BaseModelArgs
+from .base import BaseModelArgs, KVCache, create_attention_mask
+from .su_rope import SuScaledRotaryEmbedding
 from .quantized_linear_gba import QuantizedLinear
 
 
@@ -17,10 +21,12 @@ class ModelArgs(BaseModelArgs):
     num_attention_heads: int
     rms_norm_eps: float
     vocab_size: int
-    num_key_value_heads: int = None
+    num_key_value_heads: Optional[int] = None
     rope_theta: float = 10000
     rope_traditional: bool = False
-    rope_scaling: Optional[Dict[str, Union[float, str]]] = None
+    rope_scaling: Optional[Dict[str, Union[float, List[float]]]] = None
+    max_position_embeddings: int = 131072
+    original_max_position_embeddings: int = 4096
 
     def __post_init__(self):
         if self.num_key_value_heads is None:
@@ -31,9 +37,9 @@ class ModelArgs(BaseModelArgs):
             if not all(key in self.rope_scaling for key in required_keys):
                 raise ValueError(f"rope_scaling must contain keys {required_keys}")
 
-            if self.rope_scaling["type"] != "linear":
+            if self.rope_scaling["type"] not in ["longrope", "su", "linear"]:
                 print(
-                    "[WARNING] rope_scaling 'type' currently only supports 'linear' setting rope scaling to false."
+                    "[WARNING] rope_scaling 'type' currently only supports 'linear', 'su', and 'longrope'; setting rope scaling to false."
                 )
                 self.rope_scaling = None
 
@@ -44,6 +50,7 @@ class Attention(nn.Module):
 
         dim = args.hidden_size
         self.n_heads = n_heads = args.num_attention_heads
+        assert args.num_key_value_heads is not None
         self.n_kv_heads = n_kv_heads = args.num_key_value_heads
         self.num_hidden_layers = args.num_hidden_layers
 
@@ -54,23 +61,32 @@ class Attention(nn.Module):
         self.qkv_proj = QuantizedLinear(dim, op_size, bias=False)
         self.o_proj = QuantizedLinear(n_heads * head_dim, dim, bias=False)
 
-        rope_scale = (
-            1 / args.rope_scaling["factor"]
-            if args.rope_scaling is not None and args.rope_scaling["type"] == "linear"
-            else 1
-        )
-        self.rope = nn.RoPE(
-            head_dim,
-            traditional=args.rope_traditional,
-            base=args.rope_theta,
-            scale=rope_scale,
-        )
+        if args.rope_scaling and args.rope_scaling["type"] in ["longrope", "su"]:
+            self.rope = SuScaledRotaryEmbedding(
+                head_dim,
+                base=args.rope_theta,
+                max_position_embeddings=args.max_position_embeddings,
+                original_max_position_embeddings=args.original_max_position_embeddings,
+                short_factor=args.rope_scaling["short_factor"],
+                long_factor=args.rope_scaling["long_factor"],
+            )
+        else:
+            rope_scale = 1.0
+            if args.rope_scaling and args.rope_scaling["type"] == "linear":
+                assert isinstance(args.rope_scaling["factor"], float)
+                rope_scale = 1 / args.rope_scaling["factor"]
+            self.rope = nn.RoPE(
+                head_dim,
+                traditional=args.rope_traditional,
+                base=args.rope_theta,
+                scale=rope_scale,
+            )
 
     def __call__(
         self,
         x: mx.array,
         mask: Optional[mx.array] = None,
-        cache: Optional[Tuple[mx.array, mx.array]] = None,
+        cache: Optional[KVCache] = None,
     ) -> mx.array:
         B, L, D = x.shape
 
@@ -129,7 +145,7 @@ class TransformerBlock(nn.Module):
         self,
         x: mx.array,
         mask: Optional[mx.array] = None,
-        cache: Optional[Tuple[mx.array, mx.array]] = None,
+        cache: Optional[KVCache] = None,
     ) -> mx.array:
         r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = x + r
@@ -158,10 +174,7 @@ class Phi3Model(nn.Module):
     ):
         h = self.embed_tokens(inputs)
 
-        mask = None
-        if h.shape[1] > 1:
-            mask = nn.MultiHeadAttention.create_additive_causal_mask(h.shape[1])
-            mask = mask.astype(h.dtype)
+        mask = create_attention_mask(h, cache)
 
         if cache is None:
             cache = [None] * len(self.layers)

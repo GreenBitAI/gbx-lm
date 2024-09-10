@@ -64,8 +64,7 @@ lora_parameters:
   keys: ["self_attn.q_proj", "self_attn.v_proj"]   # "mistral","llama","phi","mixtral","stablelm","qwen2","qwen2_moe","gemma","starcoder2","cohere","minicpm"
 #  keys: ["self_attn.qkv_proj"]  # "phi3"
   rank: 8
-  alpha: 16.0
-  scale: 10.0
+  scale: 20.0
   dropout: 0.0
 
 # Schedule can only be specified in a config file, uncomment to use.
@@ -74,3 +73,11 @@ lora_parameters:
 #  warmup: 100 # 0 for no warmup
 #  warmup_init: 1e-7 # 0 if not specified
 #  arguments: [1e-5, 1000, 1e-7] # passed to scheduler
+
+#hf_dataset:
+#  name: "billsum"
+#  train_split: "train[:1000]"
+#  valid_split: "train[-100:]"
+#  prompt_feature: "text"
+#  completion_feature: "summary"
+

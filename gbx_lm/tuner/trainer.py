@@ -1,6 +1,5 @@
-# Initial code base from https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm under the MIT License.
+# Copyright © 2024 Apple Inc.
 # Additional code from GreenBitAI is licensed under the Apache 2.0 License.
-
 
 import time
 from dataclasses import dataclass, field
@@ -31,9 +30,6 @@ def grad_checkpoint(layer):
 
 @dataclass
 class TrainingArgs:
-    lora_layers: int = field(
-        default=16, metadata={"help": "Number of layers to fine-tune"}
-    )
     batch_size: int = field(default=4, metadata={"help": "Minibatch size."})
     iters: int = field(default=100, metadata={"help": "Iterations to train for."})
     val_batches: int = field(
@@ -97,6 +93,12 @@ def iterate_batches(dataset, tokenizer, batch_size, max_seq_length, train=False)
         for i in indices:
             # Encode batch
             batch = [tokenizer.encode(dataset[j]) for j in batch_idx[i]]
+            for b in batch:
+                if b[-1] == tokenizer.eos_token_id:
+                    print("[WARNING] Example already has an EOS token appended")
+                else:
+                    b.append(tokenizer.eos_token_id)
+
             lengths = [len(x) for x in batch]
 
             if max(lengths) > max_seq_length:
@@ -213,6 +215,35 @@ def train(
             train=True,
         ),
     ):
+        # Report validation loss if needed, the first validation loss
+        # is always measured before any training.
+        if it == 1 or it % args.steps_per_eval == 0 or it == args.iters:
+            stop = time.perf_counter()
+            val_loss = evaluate(
+                model=model,
+                dataset=val_dataset,
+                loss=loss,
+                tokenizer=tokenizer,
+                batch_size=args.batch_size,
+                num_batches=args.val_batches,
+                max_seq_length=args.max_seq_length,
+                iterate_batches=iterate_batches,
+            )
+            val_time = time.perf_counter() - stop
+            print(
+                f"Iter {it}: " f"Val loss {val_loss:.3f}, " f"Val took {val_time:.3f}s"
+            )
+
+            if training_callback is not None:
+                val_info = {
+                    "iteration": it,
+                    "val_loss": val_loss,
+                    "val_time": val_time,
+                }
+                training_callback.on_val_loss_report(val_info)
+
+            start = time.perf_counter()
+
         lvalue, toks = step(batch)
         mx.eval(state, lvalue, toks)
 
@@ -222,9 +253,9 @@ def train(
 
         # Report training loss if needed
         if it % args.steps_per_report == 0 or it == args.iters:
-            train_loss = np.mean(losses)
-
             stop = time.perf_counter()
+
+            train_loss = np.mean(losses)
             learning_rate = optimizer.learning_rate.item()
             it_sec = args.steps_per_report / (stop - start)
             tokens_sec = float(n_tokens) / (stop - start)
@@ -253,34 +284,6 @@ def train(
 
             losses = []
             n_tokens = 0
-            start = time.perf_counter()
-
-        # Report validation loss if needed
-        if it == 1 or it % args.steps_per_eval == 0 or it == args.iters:
-            stop = time.perf_counter()
-            val_loss = evaluate(
-                model=model,
-                dataset=val_dataset,
-                loss=loss,
-                tokenizer=tokenizer,
-                batch_size=args.batch_size,
-                num_batches=args.val_batches,
-                max_seq_length=args.max_seq_length,
-                iterate_batches=iterate_batches,
-            )
-            val_time = time.perf_counter() - stop
-            print(
-                f"Iter {it}: " f"Val loss {val_loss:.3f}, " f"Val took {val_time:.3f}s"
-            )
-
-            if training_callback is not None:
-                val_info = {
-                    "iteration": it,
-                    "val_loss": val_loss,
-                    "val_time": val_time,
-                }
-                training_callback.on_val_loss_report(val_info)
-
             start = time.perf_counter()
 
         # Save adapter weights

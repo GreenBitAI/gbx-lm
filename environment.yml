@@ -15,3 +15,6 @@ dependencies:
       - transformers>=4.39.3
       - pyyaml
       - jinja2
+      - fastapi
+      - uvicorn
+      - pydantic

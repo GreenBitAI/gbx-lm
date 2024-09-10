@@ -120,7 +120,7 @@ class SPMStreamingDetokenizer(StreamingDetokenizer):
         self.trim_space = trim_space
 
         # Extract the tokens in a list from id to text
-        self.tokenmap = [None] * len(tokenizer.vocab)
+        self.tokenmap = [""] * (max(tokenizer.vocab.values()) + 1)
         for value, tokenid in tokenizer.vocab.items():
             self.tokenmap[tokenid] = value
 
@@ -252,8 +252,18 @@ class TokenizerWrapper:
     def __getattr__(self, attr):
         if attr == "detokenizer":
             return self._detokenizer
+        elif attr.startswith("_"):
+            return self.__getattribute__(attr)
         else:
             return getattr(self._tokenizer, attr)
+
+    def __setattr__(self, attr, value):
+        if attr == "detokenizer":
+            raise AttributeError("Cannot set the detokenizer.")
+        elif attr.startswith("_"):
+            super().__setattr__(attr, value)
+        else:
+            setattr(self._tokenizer, attr, value)
 
 
 def _match(a, b):

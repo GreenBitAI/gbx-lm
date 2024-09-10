@@ -56,16 +56,16 @@ python -m gbx_lm.serve.mlx_fastchat_worker --model-path GreenBitAI/Mistral-7B-In
 
 ### Launch the Gradio Web UI
 
+Ensure Gradio is installed on your system. If not, you can install it using pip:
+
+```bash
+pip install gradio
+```
+
 To start the Gradio web UI, execute:
 
 ```bash
 python -m fastchat.serve.gradio_web_server --share
-```
-
-Before this step, ensure Gradio is installed on your system. If not, you can install it using pip:
-
-```bash
-pip install gradio
 ```
 
 Upon completing these steps, the worker should be operational and accessible via a local URL: http://0.0.0.0:7860. Open this URL in your preferred web browser to begin interacting with your local MLX LLM. Enjoy your conversations!

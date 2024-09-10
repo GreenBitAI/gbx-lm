@@ -7,3 +7,6 @@ transformers>=4.39.3
 huggingface_hub
 pyyaml
 jinja2
+fastapi
+uvicorn
+pydantic
