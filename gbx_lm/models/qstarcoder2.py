@@ -154,12 +154,14 @@ class Model(nn.Module):
         self,
         inputs: mx.array,
         cache=None,
+        hidden_states=False
     ):
         out = self.model(inputs, cache)
         if self.args.tie_word_embeddings:
-            out = self.model.embed_tokens.as_linear(out)
+            out = (self.model.embed_tokens.as_linear(out), out) if hidden_states else self.model.embed_tokens.as_linear(
+                out)
         else:
-            out = self.lm_head(out)
+            out = (self.lm_head(out), out) if hidden_states else self.lm_head(out)
         return out
 
     @property

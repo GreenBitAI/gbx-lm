@@ -1,4 +1,4 @@
-# GBA Model Toolkit for M LX
+# GBA Model Toolkit for MLX
 
 ## Introduction
 Welcome to the GreenBitAI (GBA) Model Toolkit for [MLX](https://github.com/ml-explore/mlx)! This comprehensive Python package not only facilitates the conversion of [GreenBitAI's Low-bit Language Models (LLMs)](https://huggingface.co/collections/GreenBitAI/greenbitai-mlx-llm-6614eb6ceb8da657c2b4ed58) to MLX framework compatible format but also supports generation, model loading, and other essential scripts tailored for GBA quantized models. Designed to enhance the integration and deployment of GBA models within the MLX ecosystem, this toolkit enables the efficient execution of GBA models on a variety of platforms, with special optimizations for Apple devices to enable local inference and natural language content generation. 
@@ -54,7 +54,7 @@ A high-performance HTTP API for text generation with GreenBitAI's mlx models. Im
 #### Quick Start
 1. Run:
    ```shell
-   python -m gbx_lm.fastapi_server.py --model GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx
+   python -m gbx_lm.fastapi_server --model GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx
    ```
 2. Use:
    ```shell
