@@ -136,6 +136,17 @@ def colorprint_by_t0(s, t0):
 
 
 def load_kv_cache_from_file(kv_cache_file):
+    """
+    Load key-value cache from a specified file and organize it by layer.
+
+    Args:
+        kv_cache_file (str or None): The path to the cache file. If None, the function returns (None, None).
+
+    Returns:
+        tuple: A tuple containing:
+            - cache_history (list): A list where each index corresponds to a layer and contains a tuple of (keys, values).
+            - metadata (any): Metadata returned from the cache file.
+    """
     if kv_cache_file is None:
         return None, None
 
@@ -161,7 +172,7 @@ def do_generate(args, model: nn.Module, tokenizer: PreTrainedTokenizer, prompt: 
         messages = [
             {
                 "role": "user",
-                "content": sys.stdin.read() if args.prompt == "-" else args.prompt,
+                "content": sys.stdin.read() if prompt == "-" else prompt,
             }
         ]
         prompt = tokenizer.apply_chat_template(
@@ -178,7 +189,7 @@ def do_generate(args, model: nn.Module, tokenizer: PreTrainedTokenizer, prompt: 
             )
             prompt = prompt[test_prompt.index("<query>") :]
     else:
-        prompt = args.prompt
+        prompt = prompt
 
     if args.colorize and not args.verbose:
         raise ValueError("Cannot use --colorize with --verbose=False")
