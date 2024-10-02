@@ -125,8 +125,11 @@ class ChatGBX(BaseChatModel):
             )
             chat_generations.append(chat_generation)
 
+        # Ensure llm_output is a dictionary
+        llm_output = llm_result.llm_output if isinstance(llm_result.llm_output, dict) else {}
+
         return ChatResult(
-            generations=chat_generations, llm_output=llm_result.llm_output
+            generations=chat_generations, llm_output=llm_output
         )
 
     @property
@@ -149,7 +152,8 @@ class ChatGBX(BaseChatModel):
                 "Could not import gbx_lm python package. "
                 "Please install it with `pip install gbx_lm`."
             )
-        model_kwargs = kwargs.get("model_kwargs", self.llm.pipeline_kwargs)
+
+        model_kwargs = kwargs.get("model_kwargs", self.llm.pipeline_kwargs) or {}
         temp: float = model_kwargs.get("temp", 0.0)
         max_new_tokens: int = model_kwargs.get("max_tokens", 100)
         repetition_penalty: Optional[float] = model_kwargs.get(
