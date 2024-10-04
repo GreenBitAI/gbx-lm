@@ -8,6 +8,7 @@ from langchain_core.language_models.llms import LLM
 from langchain_core.outputs import GenerationChunk
 
 import mlx.core as mx
+from gbx_lm import load, generate
 from gbx_lm.generate import load_kv_cache_from_file
 
 DEFAULT_MODEL_ID = "GreenBitAI/Llama-3-8B-layer-mix-bpw-4.0-mlx"
@@ -61,7 +62,7 @@ class GBXPipeline(LLM):
     pipeline_kwargs: Optional[dict] = None
     """
     Keyword arguments passed to the pipeline. Defaults include:
-        - temp (float): Temperature for generation, default is 0.0.
+        - temp (float): Temperature for generation, default is 0.7.
         - max_tokens (int): Maximum tokens to generate, default is 100.
         - verbose (bool): Whether to output verbose logging, default is False.
         - formatter (Optional[Callable]): A callable to format the output.
@@ -94,14 +95,6 @@ class GBXPipeline(LLM):
         **kwargs: Any,
     ) -> GBXPipeline:
         """Construct the pipeline object from model_id and task."""
-        try:
-            from gbx_lm import load
-
-        except ImportError:
-            raise ImportError(
-                "Could not import gbx_lm python package. "
-                "Please install it with `pip install gbx_lm`."
-            )
 
         # Load the kv cache and metadata if a kv cache file is provided
         cache_history = None
@@ -167,18 +160,10 @@ class GBXPipeline(LLM):
         run_manager: Optional[CallbackManagerForLLMRun] = None,
         **kwargs: Any,
     ) -> str:
-        try:
-            from gbx_lm import generate
-
-        except ImportError:
-            raise ImportError(
-                "Could not import gbx_lm python package. "
-                "Please install it with `pip install gbx_lm`."
-            )
 
         pipeline_kwargs = kwargs.get("pipeline_kwargs", self.pipeline_kwargs) or {}
 
-        temp: float = pipeline_kwargs.get("temp", 0.0)
+        temp: float = pipeline_kwargs.get("temp", 0.7)
         max_tokens: int = pipeline_kwargs.get("max_tokens", 100)
         verbose: bool = pipeline_kwargs.get("verbose", False)
         formatter: Optional[Callable] = pipeline_kwargs.get("formatter", None)
@@ -232,7 +217,7 @@ class GBXPipeline(LLM):
 
         pipeline_kwargs = kwargs.get("pipeline_kwargs", self.pipeline_kwargs) or {}
 
-        temp: float = pipeline_kwargs.get("temp", 0.0)
+        temp: float = pipeline_kwargs.get("temp", 0.7)
         max_new_tokens: int = pipeline_kwargs.get("max_tokens", 100)
         repetition_penalty: Optional[float] = pipeline_kwargs.get(
             "repetition_penalty", None
