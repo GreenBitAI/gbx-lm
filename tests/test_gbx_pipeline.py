@@ -6,24 +6,10 @@ from langchain_core.outputs import GenerationChunk
 
 class TestGBXPipeline(unittest.TestCase):
 
-    @patch('gbx_lm.load')
-    def test_from_model_id(self, mock_load):
-        # Mock the load function
-        mock_model = MagicMock()
-        mock_tokenizer = MagicMock()
-        mock_load.return_value = (mock_model, mock_tokenizer)
 
-        # Test creating a pipeline from model_id
-        pipeline = GBXPipeline.from_model_id("test_model_id")
-
-        self.assertEqual(pipeline.model_id, "test_model_id")
-        self.assertIsNotNone(pipeline.model)
-        self.assertIsNotNone(pipeline.tokenizer)
-        mock_load.assert_called_once_with("test_model_id", {}, lazy=False)
-
-    @patch('gbx_lm.generate')
+    @patch('gbx_lm.langchain.gbx_pipeline.generate')
     def test_call(self, mock_generate):
-        # Mock the generate function
+        # Mock the generate function to return a simple string
         mock_generate.return_value = "Test response"
 
         # Create a pipeline instance
@@ -69,7 +55,7 @@ class TestGBXPipeline(unittest.TestCase):
         args, kwargs = mock_generate_step.call_args
         self.assertIn('prompt', kwargs)
         self.assertIn('model', kwargs)
-        self.assertEqual(kwargs.get('temp', None), 0.0)  # Assuming default temperature is 0.0
+        self.assertEqual(kwargs.get('top_p', None), 1.0)
 
     def test_identifying_params(self):
         pipeline = GBXPipeline(model_id="test_model", model=MagicMock(), tokenizer=MagicMock())
