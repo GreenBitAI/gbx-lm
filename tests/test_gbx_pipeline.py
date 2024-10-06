@@ -2,10 +2,43 @@ import unittest
 from unittest.mock import patch, MagicMock
 from gbx_lm.langchain import GBXPipeline
 from langchain_core.outputs import GenerationChunk
+import os
+import warnings
 
+# Environment variable to control skipping the large model download
+SKIP_LARGE_DOWNLOAD = os.environ.get('SKIP_LARGE_DOWNLOAD', '').lower() in ('true', '1', 'yes')
 
 class TestGBXPipeline(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        warnings.warn(
+            "\nWARNING: This test will download a large model file (approximately 700MB). "
+            "Ensure you have sufficient disk space and a stable internet connection. "
+            "To skip this test, set the SKIP_LARGE_DOWNLOAD environment variable to 'true'.",
+            category=ResourceWarning
+        )
+
+    @unittest.skipIf(SKIP_LARGE_DOWNLOAD, "Skipping test that requires downloading a large model")
+    def test_from_model_id(self):
+        model_id = "GreenBitAI/Qwen-1.5-0.5B-layer-mix-bpw-2.2-mlx"
+
+        # Create pipeline
+        pipeline = GBXPipeline.from_model_id(model_id)
+
+        # Verify if the pipeline is correctly created
+        self.assertIsInstance(pipeline, GBXPipeline)
+        self.assertEqual(pipeline.model_id, model_id)
+        self.assertIsNotNone(pipeline.model)
+        self.assertIsNotNone(pipeline.tokenizer)
+
+        # Test a simple call
+        test_input = "Berlin is "
+        response = pipeline(test_input)
+
+        # Validate the response
+        self.assertIsInstance(response, str)
+        self.assertNotEqual(response, "")
 
     @patch('gbx_lm.langchain.gbx_pipeline.generate')
     def test_call(self, mock_generate):
