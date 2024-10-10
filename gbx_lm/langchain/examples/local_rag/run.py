@@ -1,3 +1,4 @@
+import argparse
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -10,8 +11,6 @@ from gbx_lm.langchain import GBXPipeline
 from gbx_lm.langchain.examples.common import get_bert_mlx_embeddings
 
 import re
-
-MAX_TOKENS = 200
 
 
 # Helper function to format documents
@@ -49,8 +48,8 @@ def extract_answer(text):
     return text[:100] + '...' if len(text) > 100 else text
 
 # Load and prepare data
-def prepare_data():
-    loader = WebBaseLoader("https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/")
+def prepare_data(url):
+    loader = WebBaseLoader(url)
     data = loader.load()
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
     all_splits = text_splitter.split_documents(data)
@@ -62,10 +61,10 @@ def create_vectorstore(documents):
     return Chroma.from_documents(documents=documents, embedding=bert_mlx_embeddings)
 
 # Initialize GBX model
-def init_gbx_model():
+def init_gbx_model(model_id, max_tokens):
     llm = GBXPipeline.from_model_id(
-        model_id="GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx",
-        pipeline_kwargs={"max_tokens": MAX_TOKENS, "temp": 0.6}
+        model_id=model_id,
+        pipeline_kwargs={"max_tokens": max_tokens, "temp": 0.6}
     )
     return ChatGBX(llm=llm)
 
@@ -143,24 +142,31 @@ def qa_with_retrieval(model, vectorstore, question):
     print(response)
 
 # Main execution
-def main():
+def main(model_id, query, max_tokens, web_source):
     print_task_separator("Initialization")
     print("Preparing data and initializing model...")
     # Prepare data and initialize model
-    all_splits = prepare_data()
+    all_splits = prepare_data(web_source)
     vectorstore = create_vectorstore(all_splits)
-    model = init_gbx_model()
+    model = init_gbx_model(model_id, max_tokens)
     print("Initialization complete.")
 
     # Execute tasks
     simulate_rap_battle(model)
 
-    question = "What are the core method components of GraphRAG??"
-    summarize_docs(model, vectorstore, question)
-    question_answering(model, vectorstore, question)
-    qa_with_retrieval(model, vectorstore, question)
+    summarize_docs(model, vectorstore, query)
+    question_answering(model, vectorstore, query)
+    qa_with_retrieval(model, vectorstore, query)
 
     print("\nAll tasks completed.")
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Run NLP tasks with specified model, query, max tokens, and web source.")
+    parser.add_argument("--model", type=str, required=True, help="Model ID to use for the tasks")
+    parser.add_argument("--query", type=str, required=True, help="Query to use for the tasks")
+    parser.add_argument("--max_tokens", type=int, default=200, help="Maximum number of tokens for model output (default: 200)")
+    parser.add_argument("--web_source", type=str, default="https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/",
+                        help="URL of the web source to load data from (default: Microsoft Research blog post on GraphRAG)")
+    args = parser.parse_args()
+
+    main(args.model, args.query, args.max_tokens, args.web_source)
