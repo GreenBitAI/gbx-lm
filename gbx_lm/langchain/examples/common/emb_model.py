@@ -169,22 +169,22 @@ class BertMLXEmbeddings:
         return embeddings[0].tolist()
 
 
-# Keep the convenience function
-def get_bert_mlx_embeddings() -> BertMLXEmbeddings:
-    return BertMLXEmbeddings()
-
-
-# Add a new function to check LangChain compatibility
-def is_langchain_compatible():
+# Define a function to check LangChain compatibility and update the class if necessary
+def setup_langchain_compatibility():
     try:
         from langchain.embeddings.base import Embeddings
-        return issubclass(BertMLXEmbeddings, Embeddings)
+        global BertMLXEmbeddings
+        if not issubclass(BertMLXEmbeddings, Embeddings):
+            class BertMLXEmbeddingsLangChain(BertMLXEmbeddings, Embeddings):
+                pass
+            BertMLXEmbeddings = BertMLXEmbeddingsLangChain
+        return True
     except ImportError:
         return False
 
+# Run the setup function
+is_langchain_compatible = setup_langchain_compatibility()
 
-# If LangChain is available, make BertMLXEmbeddings compatible
-if is_langchain_compatible():
-    from langchain.embeddings.base import Embeddings
-
-    BertMLXEmbeddings.__bases__ = (Embeddings,)
+# Keep the convenience function
+def get_bert_mlx_embeddings() -> BertMLXEmbeddings:
+    return BertMLXEmbeddings()

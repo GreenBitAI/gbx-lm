@@ -105,7 +105,7 @@ class TestChatGBX(unittest.TestCase):
     @patch('mlx.core')
     def test_stream(self, mock_mx, mock_generate_step):
         messages = [HumanMessage(content="Hello")]
-        mock_generate_step.return_value = iter([(1, 0.5), (2, 0.3), (3, 0.2)])
+        mock_generate_step.return_value = iter([(1, 0.5, None), (2, 0.3, None), (3, 0.2, None)])
 
         self.chat_model.tokenizer.encode.return_value = [[1, 2, 3]]
         self.chat_model.tokenizer.eos_token_id = 3

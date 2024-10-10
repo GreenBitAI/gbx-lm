@@ -164,7 +164,8 @@ def generate_step(
     prefill_step_size: int = 512,
     max_kv_size: Optional[int] = None,
     cache_history: Optional[List[Tuple[mx.array, mx.array]]] = None,
-) -> Generator[Tuple[mx.array, mx.array], None, None]:
+    with_hidden_states: bool = False
+) -> Generator[Tuple[int, mx.array, Optional[mx.array]], None, None]:
     """
     A generator producing token ids based on the given prompt from the model.
 
@@ -187,6 +188,7 @@ def generate_step(
         prefill_step_size (int): Step size for processing the prompt.
         max_kv_size (int, optional): Maximum size of the key-value cache. Old
           entries (except the first 4 tokens) will be overwritten.
+        with_hidden_states (bool): If ``True``, return hidden states. Default: ``False``.
 
     Yields:
         Generator[Tuple[mx.array, mx.array], None, None]: A generator producing
@@ -241,7 +243,11 @@ def generate_step(
 
     def _step(y):
         nonlocal repetition_context
-        logits = model(y[None], cache=cache)
+        prompt_hidden_states = None
+        if with_hidden_states:
+            logits, prompt_hidden_states = model(y[None], cache=cache, hidden_states=True)
+        else:
+            logits = model(y[None], cache=cache)
         logits = logits[:, -1, :]
 
         if repetition_penalty:
@@ -256,20 +262,20 @@ def generate_step(
         if repetition_context_size:
             if len(repetition_context) > repetition_context_size:
                 repetition_context = repetition_context[-repetition_context_size:]
-        return y, logprobs.squeeze(0)
+        return y, logprobs.squeeze(0), prompt_hidden_states
 
     while y.size > prefill_step_size:
         model(y[:prefill_step_size][None], cache=cache)
         mx.eval([c.state for c in cache])
         y = y[prefill_step_size:]
 
-    y, logprobs = _step(y)
+    y, logprobs, h_states = _step(y)
 
     mx.async_eval(y)
     while True:
-        next_y, next_logprobs = _step(y)
+        next_y, next_logprobs, h_states = _step(y)
         mx.async_eval(next_y)
-        yield y.item(), logprobs
+        yield y.item(), logprobs, h_states
         y, logprobs = next_y, next_logprobs
 
 
@@ -300,7 +306,7 @@ def stream_generate(
     detokenizer = tokenizer.detokenizer
 
     detokenizer.reset()
-    for (token, _), n in zip(
+    for (token,  logprobs, _), n in zip(
         generate_step(prompt_tokens, model, **kwargs),
         range(max_tokens),
     ):
@@ -322,6 +328,7 @@ def generate(
     max_tokens: int = 100,
     verbose: bool = False,
     formatter: Optional[Callable] = None,
+    with_hidden_states: bool = False,
     **kwargs,
 ) -> Union[str, Generator[str, None, None]]:
     """
@@ -336,6 +343,7 @@ def generate(
            Default: ``False``.
        formatter (Optional[Callable]): A function which takes a token and a
            probability and displays it.
+       with_hidden_states (bool): If ``True``, return hidden states. Default: ``False``.
        kwargs: The remaining options get passed to :func:`generate_step`.
           See :func:`generate_step` for more details.
     """
@@ -352,8 +360,10 @@ def generate(
     tic = time.perf_counter()
     detokenizer.reset()
 
-    for (token, logprobs), n in zip(
-        generate_step(prompt_tokens, model, **kwargs),
+    all_hidden_states = [] if with_hidden_states else None
+
+    for (token, logprobs, hidden_states), n in zip(
+        generate_step(prompt_tokens, model, with_hidden_states=with_hidden_states, **kwargs),
         range(max_tokens),
     ):
         if n == 0:
@@ -362,6 +372,9 @@ def generate(
         if token == tokenizer.eos_token_id:
             break
         detokenizer.add_token(token)
+
+        if with_hidden_states and hidden_states is not None:
+            all_hidden_states.append(hidden_states)
 
         if verbose:
             if formatter:
@@ -388,7 +401,10 @@ def generate(
         peak_mem = mx.metal.get_peak_memory() / 2**30
         print(f"Peak memory: {peak_mem:.3f} GB")
 
-    return detokenizer.text
+    if with_hidden_states:
+        return detokenizer.text, all_hidden_states
+    else:
+        return detokenizer.text
 
 
 def get_parameter_usage_info(weights):

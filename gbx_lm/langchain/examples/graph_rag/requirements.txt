@@ -1,0 +1,15 @@
+langchain-core
+langchain-community
+langchain-experimental
+pydantic
+neo4j
+graphdatascience
+nltk
+retry
+matplotlib
+seaborn
+concurrent
+tqdm
+json_repair
+pandas
+transformers

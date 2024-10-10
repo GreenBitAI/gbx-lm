@@ -244,7 +244,7 @@ class GBXPipeline(LLM):
         detokenizer = self.tokenizer.detokenizer
         detokenizer.reset()
 
-        for (token, prob), n in zip(
+        for (token, prob, _), n in zip(
             generate_step(
                 prompt=prompt_tokens,
                 model=self.model,

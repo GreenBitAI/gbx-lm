@@ -1,6 +1,10 @@
 """gbx_ml Chat Wrapper."""
 
-from typing import Any, Iterator, List, Optional
+from typing import Any, List, Optional, Iterator
+from langchain_core.tools import BaseTool
+from pydantic import BaseModel
+from langchain_core.output_parsers import PydanticOutputParser
+
 
 from langchain_core.callbacks.manager import (
     AsyncCallbackManagerForLLMRun,
@@ -172,7 +176,7 @@ class ChatGBX(BaseChatModel):
         detokenizer = self.tokenizer.detokenizer
         detokenizer.reset()
 
-        for (token, prob), n in zip(
+        for (token, prob, _), n in zip(
             generate_step(
                 prompt_tokens,
                 self.llm.model,
@@ -201,3 +205,27 @@ class ChatGBX(BaseChatModel):
             # break if stop sequence found
             if token == eos_token_id or (stop is not None and text in stop):
                 break
+
+    def bind_tools(
+            self, tools: List[Any], tool_choice: Optional[str] = None
+    ) -> BaseChatModel:
+        tool_strings = []
+        for tool in tools:
+            if isinstance(tool, BaseTool):
+                tool_strings.append(f"- {tool.name}: {tool.description}")
+            elif isinstance(tool, type) and issubclass(tool, BaseModel):
+                # This is a Pydantic model for structured output
+                parser = PydanticOutputParser(pydantic_object=tool)
+                tool_strings.append(f"Output Format: {parser.get_format_instructions()}")
+            else:
+                raise ValueError(f"Unsupported tool type: {type(tool)}")
+
+        tool_string = "\n".join(tool_strings)
+
+        new_system_message = SystemMessage(content=f"{self.system_message.content}\n\n{tool_string}")
+
+        return self.__class__(
+            llm=self.llm,
+            system_message=new_system_message,
+            tokenizer=self.tokenizer
+        )

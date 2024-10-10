@@ -57,7 +57,7 @@ class TestGBXPipeline(unittest.TestCase):
     @patch('gbx_lm.generate_step')
     def test_stream(self, mock_generate_step):
         # Mock the generate_step function
-        mock_generate_step.return_value = iter([(1, 0.5), (2, 0.3), (3, 0.2)])
+        mock_generate_step.return_value = iter([(1, 0.5, None), (2, 0.3, None), (3, 0.2, None)])
 
         # Create a pipeline instance with mocked tokenizer
         mock_tokenizer = MagicMock()

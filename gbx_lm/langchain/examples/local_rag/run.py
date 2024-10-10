@@ -1,4 +1,3 @@
-# Import necessary libraries
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_chroma import Chroma
@@ -8,10 +7,12 @@ from langchain_core.runnables import RunnablePassthrough
 
 from gbx_lm.langchain.chat_gbx import ChatGBX
 from gbx_lm.langchain import GBXPipeline
+from gbx_lm.langchain.examples.common import get_bert_mlx_embeddings
 
 import re
 
-from .emb_model import get_bert_mlx_embeddings
+MAX_TOKENS = 200
+
 
 # Helper function to format documents
 def format_docs(docs):
@@ -49,7 +50,7 @@ def extract_answer(text):
 
 # Load and prepare data
 def prepare_data():
-    loader = WebBaseLoader("https://lilianweng.github.io/posts/2023-06-23-agent/")
+    loader = WebBaseLoader("https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/")
     data = loader.load()
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=0)
     all_splits = text_splitter.split_documents(data)
@@ -64,21 +65,21 @@ def create_vectorstore(documents):
 def init_gbx_model():
     llm = GBXPipeline.from_model_id(
         model_id="GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx",
-        pipeline_kwargs={"max_tokens": 100, "temp": 0.6}
+        pipeline_kwargs={"max_tokens": MAX_TOKENS, "temp": 0.6}
     )
     return ChatGBX(llm=llm)
 
 # Task 1: Rap Battle Simulation
 def simulate_rap_battle(model):
     print_task_separator("Rap Battle Simulation")
-    response = model.invoke("Simulate a rap battle between RAG and GraphRAG")
+    response = model.invoke("Simulate a rap battle between rag and graphRag.")
     print(response.content)
 
 # Task 2: Summarization
 def summarize_docs(model, vectorstore, question):
     print_task_separator("Summarization")
     prompt = ChatPromptTemplate.from_template(
-        "Summarize the main themes in these retrieved docs in a single, complete sentence of no more than 50 words: {docs}"
+        "Summarize the main themes in these retrieved docs in a single, complete sentence of no more than 100 words: {docs}"
     )
     chain = (
         {"docs": format_docs}
@@ -96,7 +97,7 @@ def summarize_docs(model, vectorstore, question):
 def question_answering(model, vectorstore, question):
     print_task_separator("Q&A")
     RAG_TEMPLATE = """
-    Answer the following question based on the context provided. Give a direct and concise answer in a single, complete sentence of no more than 30 words. Do not include any additional dialogue or explanation.
+    Answer the following question based on the context provided. Give a direct and concise answer in a single, complete sentence of no more than 100 words. Do not include any additional dialogue or explanation.
 
     Context:
     {context}
@@ -122,7 +123,7 @@ def question_answering(model, vectorstore, question):
 def qa_with_retrieval(model, vectorstore, question):
     print_task_separator("Q&A with Retrieval")
     RAG_TEMPLATE = """
-    Answer the following question based on the retrieved information. Provide a direct and concise answer in a single, complete sentence of no more than 30 words. Do not include any additional dialogue or explanation.
+    Answer the following question based on the retrieved information. Provide a direct and concise answer in a single, complete sentence of no more than 100 words. Do not include any additional dialogue or explanation.
 
     Question: {question}
 
@@ -154,7 +155,7 @@ def main():
     # Execute tasks
     simulate_rap_battle(model)
 
-    question = "What are the approaches to Task Decomposition?"
+    question = "What are the core method components of GraphRAG??"
     summarize_docs(model, vectorstore, question)
     question_answering(model, vectorstore, question)
     qa_with_retrieval(model, vectorstore, question)
