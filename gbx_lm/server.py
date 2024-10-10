@@ -336,7 +336,7 @@ class APIHandler(BaseHTTPRequestHandler):
         logging.debug(f"Starting completion:")
         token_logprobs = []
         top_tokens = []
-        for (token, logprobs), _ in zip(
+        for (token, logprobs, _), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=self.model,
@@ -423,7 +423,7 @@ class APIHandler(BaseHTTPRequestHandler):
         stop_sequence_suffix = None
         logging.debug(f"Starting stream:")
 
-        for (token, _), _ in zip(
+        for (token, _, _), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=self.model,

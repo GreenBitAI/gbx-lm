@@ -185,7 +185,7 @@ async def stream_completion(prompt, request, model, tokenizer):
 
     stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
 
-    for (token, _), _ in zip(
+    for (token, _, _), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,
@@ -234,7 +234,7 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
 
     stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
 
-    for (token, _), _ in zip(
+    for (token, _, _), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,
@@ -282,7 +282,7 @@ def generate_completion(prompt, request, model, tokenizer):
 
     stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
 
-    for (token, _), _ in zip(
+    for (token, _, _), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,
@@ -332,7 +332,7 @@ def generate_chat_completion(prompt, request, model, tokenizer):
 
     stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
 
-    for (token, _), _ in zip(
+    for (token, _, _), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,

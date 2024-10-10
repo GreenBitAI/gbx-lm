@@ -33,7 +33,7 @@ class DummyModelProvider:
 
 
 def mock_generate_step(*args, **kwargs):
-    yield (mx.array([1]), mx.array([0.5])), None
+    yield (mx.array([1]), mx.array([0.5])), None, None
 
 
 class TestFastAPIServer(unittest.TestCase):

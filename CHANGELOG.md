@@ -48,3 +48,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - synchronized with the mlx-lm
 - simplified README
+
+## [0.3.3] - 2024/10/10
+
+### Added
+
+- langchain integration
+- local_rag and graph_rag example
+
+### Updated
+
+- generate method to support hidden states output

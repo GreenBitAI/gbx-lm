@@ -58,8 +58,13 @@ A high-performance HTTP API for text generation with GreenBitAI's mlx models. Im
    ```
 2. Use:
    ```shell
+   # Chat
    curl http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" \
      -d '{"model": "default_model", "messages": [{"role": "user", "content": "Hello!"}]}'
+   
+   # Chat stream
+   curl http://localhost:8000/v1/chat/completions -H "Content-Type: application/json"  \ 
+   -d '{"model": "default_model", "messages": [{"role": "user", "content": "Hello!"}], "stream": "True"}'
    ```
 
 #### Features
