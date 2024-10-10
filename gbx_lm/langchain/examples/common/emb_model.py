@@ -1,9 +1,12 @@
-import json, os
+import json
+import os
 import mlx.core as mx
 import mlx.nn as nn
 from pydantic import BaseModel
 from typing import List, Optional
 from transformers import AutoTokenizer
+from huggingface_hub import hf_hub_download
+import yaml
 
 
 def average_pool(last_hidden_state: mx.array, attention_mask: mx.array) -> mx.array:
@@ -121,12 +124,11 @@ class Bert(nn.Module):
 
 class Model:
     def __init__(self) -> None:
-        # converted embedding model
-        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Setup paths for mlx-bge-small-en
+        self.mlx_model_path = self.setup_mlx_model()
 
-        # Define model paths relative to the current directory
-        self.mlx_model_path = os.path.join(current_dir, "mlx-bge-small-en")
-        self.model_path = os.path.join(current_dir, "bge-small-en")
+        # Setup path for bge-small-en
+        self.model_path = self.setup_bge_model()
 
         # Load the config file
         config_path = os.path.join(self.mlx_model_path, "config.json")
@@ -141,6 +143,38 @@ class Model:
 
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+
+    def setup_mlx_model(self):
+        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
+        repo_id = "Jaward/mlx-bge-small-en"
+
+        # Download config.json
+        config_path = hf_hub_download(repo_id=repo_id, filename="config.json", cache_dir=cache_dir)
+
+        # Download model weights
+        weights_path = hf_hub_download(repo_id=repo_id, filename="bge-small-en.npz", cache_dir=cache_dir)
+
+        return os.path.dirname(config_path)
+
+    def setup_bge_model(self):
+        # Try to get model path from environment variable
+        bge_path = os.environ.get('BGE_SMALL_EN_PATH')
+
+        if not bge_path:
+            # If env var is not set, try to read from config file
+            config_file = 'config.yaml'
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f)
+                    bge_path = config.get('BGE_SMALL_EN_PATH')
+
+        if not bge_path or not os.path.exists(bge_path):
+            raise FileNotFoundError(
+                "BGE model directory not found. Please set the BGE_SMALL_EN_PATH "
+                "environment variable or specify it in config.yaml file."
+            )
+
+        return bge_path
 
     def run(self, input_text: List[str]) -> mx.array:
         tokens = self.tokenizer(input_text, return_tensors="np", padding=True)

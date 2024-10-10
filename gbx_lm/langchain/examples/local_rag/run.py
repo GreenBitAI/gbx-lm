@@ -8,7 +8,8 @@ from langchain_core.runnables import RunnablePassthrough
 
 from gbx_lm.langchain.chat_gbx import ChatGBX
 from gbx_lm.langchain import GBXPipeline
-from gbx_lm.langchain.examples.common import get_bert_mlx_embeddings
+
+from ..common import get_bert_mlx_embeddings
 
 import re
 

@@ -22,11 +22,17 @@ This project demonstrates a local implementation of Retrieval-Augmented Generati
    ```
 
 2. Download the pre-converted MLX embedding model:
-   - Go to the Hugging Face repository: [Jaward/mlx-bge-small-en](https://huggingface.co/Jaward/mlx-bge-small-en)
-   - Download the "bge-small-en.npz" file
-   - Place the downloaded file in the `common/mlx-bge-small-en` directory of your project
+   - The `bge-small-en.npz` and `config.json` file will be automatically downloaded from the Hugging Face repository: [Jaward/mlx-bge-small-en](https://huggingface.co/Jaward/mlx-bge-small-en).
+   - `bge-small-en.npz` is a pre-converted MLX format embedding file, which is necessary for running the BERT embedding model in this project.
 
-   This file is a pre-converted MLX format embedding file, which is necessary for running the BERT embedding model in this project.
+3. Set `BGE_SMALL_EN_PATH` either via environ variable or in `config.yaml` file:
+   ```
+   export BGE_SMALL_EN_PATH=/path/to/bge-small-en
+   ```
+   or add the path into the `project_root/gbx_lm/langchain/examples/common/config.yaml` file
+   ```
+   BGE_SMALL_EN_PATH: /path/to/bge-small-en
+   ```
 
 ## File Structure
 

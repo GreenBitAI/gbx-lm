@@ -7,7 +7,6 @@ from langchain_core.output_parsers import StrOutputParser
 
 from transformers import AutoTokenizer
 
-from gbx_lm.langchain.examples.common import get_bert_mlx_embeddings
 from gbx_lm.langchain.examples.graph_rag.data_processing.news_processor import download_nltk_data, load_news_data
 from gbx_lm.langchain.examples.graph_rag.data_processing.text_processor import process_text
 from gbx_lm.langchain.examples.graph_rag.graph_operations.neo4j_graph import Neo4jGraphOperations
@@ -20,6 +19,8 @@ from gbx_lm.langchain.examples.graph_rag.utils.visualization import (
     plot_node_degree_distribution
 )
 from gbx_lm.langchain.examples.graph_rag.utils.debug import print_community_info, print_summaries, print_percentiles
+
+from ..common import get_bert_mlx_embeddings
 
 
 def get_embeddings():

@@ -3,7 +3,7 @@ import os
 # Neo4j Configuration
 NEO4J_URI = "bolt://localhost:7687"
 NEO4J_USERNAME = "neo4j"
-NEO4J_PASSWORD = "your-password"
+NEO4J_PASSWORD = "bonanza-fax-1342"
 
 # Set environment variables
 os.environ["NEO4J_URI"] = NEO4J_URI
