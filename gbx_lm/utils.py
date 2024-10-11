@@ -273,7 +273,7 @@ def generate_step(
 
     mx.async_eval(y)
     while True:
-        next_y, next_logprobs, h_states = _step(y)
+        next_y, next_logprobs, _ = _step(y)
         mx.async_eval(next_y)
         yield y.item(), logprobs, h_states
         y, logprobs = next_y, next_logprobs
@@ -373,9 +373,6 @@ def generate(
             break
         detokenizer.add_token(token)
 
-        if with_hidden_states and hidden_states is not None:
-            all_hidden_states.append(hidden_states)
-
         if verbose:
             if formatter:
                 # We have to finalize so that the prob corresponds to the last segment
@@ -383,6 +380,9 @@ def generate(
                 formatter(detokenizer.last_segment, mx.exp(logprobs[token]).item())
             else:
                 print(detokenizer.last_segment, end="", flush=True)
+
+    if with_hidden_states and hidden_states is not None:
+        all_hidden_states.append(hidden_states)
 
     token_count = n + 1
     detokenizer.finalize()
