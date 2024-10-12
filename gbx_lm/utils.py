@@ -241,11 +241,11 @@ def generate_step(
     if repetition_context_size:
         repetition_context = repetition_context[-repetition_context_size:]
 
-    def _step(y):
+    def _step(y, hidden_states=False):
         nonlocal repetition_context
         prompt_hidden_states = None
-        if with_hidden_states:
-            logits, prompt_hidden_states = model(y[None], cache=cache, hidden_states=True)
+        if hidden_states:
+            logits, prompt_hidden_states = model(y[None], cache=cache, hidden_states=hidden_states)
         else:
             logits = model(y[None], cache=cache)
         logits = logits[:, -1, :]
@@ -269,7 +269,7 @@ def generate_step(
         mx.eval([c.state for c in cache])
         y = y[prefill_step_size:]
 
-    y, logprobs, h_states = _step(y)
+    y, logprobs, h_states = _step(y, hidden_states=with_hidden_states)
 
     mx.async_eval(y)
     while True:
