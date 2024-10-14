@@ -47,7 +47,7 @@ This project demonstrates a local implementation of Retrieval-Augmented Generati
 Run the main script to execute all tasks:
 
 ```
-python -m gbx_lm.langchain.examples.local_rag.run --model "GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx"  \
+python -m examples.local_rag.run --model "GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx"  \
                                                    --query "What are the core method components of GraphRAG?" \
                                                    --max_tokens 300 \
                                                    --web_source "https://www.microsoft.com/en-us/research/blog/graphrag-unlocking-llm-discovery-on-narrative-private-data/"

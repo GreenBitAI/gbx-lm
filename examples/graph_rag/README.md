@@ -89,17 +89,17 @@ The system now supports multiple modes of operation, controlled by command-line 
 
    - To create a new graph database (note that the creation process may take several hours):
      ```
-     python -m gbx_lm.langchain.examples.graph_rag.run --mode create --debug
+     python -m examples.graph_rag.run --mode create --debug
      ```
    - To perform a RAG query:
      ```
-     python -m gbx_lm.langchain.examples.graph_rag.run --mode rag --rag_mode community --rag_query "Your query here"
+     python -m examples.graph_rag.run --mode rag --rag_mode community --rag_query "Your query here"
      ```
    - To query community summaries:
      ```
-     python -m gbx_lm.langchain.examples.graph_rag.run --mode query --community_id <id>  # For a specific community
-     python -m gbx_lm.langchain.examples.graph_rag.run --mode query --keyword <keyword>  # To search by keyword
-     python -m gbx_lm.langchain.examples.graph_rag.run --mode query  # To get all summaries
+     python -m examples.graph_rag.run --mode query --community_id <id>  # For a specific community
+     python -m examples.graph_rag.run --mode query --keyword <keyword>  # To search by keyword
+     python -m examples.graph_rag.run --mode query  # To get all summaries
      ```
 
    Add the `--debug` flag to any command for detailed logging and visualization. `--rag_mode`: ["community", "entity"]

@@ -1,7 +1,7 @@
 from gbx_lm.langchain.chat_gbx import ChatGBX
 from gbx_lm.langchain import GBXPipeline
 from gbx_lm.langchain import SimpleGraphTransformer
-from gbx_lm.langchain.examples.graph_rag.config import allowed_nodes, allowed_relationships
+
 
 def init_gbx_model(model_id:str, max_tokens: int=100, temperature:float=0.0):
     llm = GBXPipeline.from_model_id(

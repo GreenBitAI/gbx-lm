@@ -1,3 +1,5 @@
+from .config import *
+
 import argparse
 import pandas as pd
 import numpy as np
@@ -7,18 +9,18 @@ from langchain_core.output_parsers import StrOutputParser
 
 from transformers import AutoTokenizer
 
-from gbx_lm.langchain.examples.graph_rag.data_processing.news_processor import download_nltk_data, load_news_data
-from gbx_lm.langchain.examples.graph_rag.data_processing.text_processor import process_text
-from gbx_lm.langchain.examples.graph_rag.graph_operations.neo4j_graph import Neo4jGraphOperations
-from gbx_lm.langchain.examples.graph_rag.graph_operations.graph_data_science import GraphDataScienceOperations
-from gbx_lm.langchain.examples.graph_rag.llm.gbx_model import init_gbx_model, create_llm_transformer
-from gbx_lm.langchain.examples.graph_rag.llm.entity_resolution import create_extraction_chain, entity_resolution
-from gbx_lm.langchain.examples.graph_rag.utils.visualization import (
+from examples.graph_rag.data_processing.news_processor import download_nltk_data, load_news_data
+from examples.graph_rag.data_processing.text_processor import process_text
+from examples.graph_rag.graph_operations.neo4j_graph import Neo4jGraphOperations
+from examples.graph_rag.graph_operations.graph_data_science import GraphDataScienceOperations
+from examples.graph_rag.llm.gbx_model import init_gbx_model, create_llm_transformer
+from examples.graph_rag.llm.entity_resolution import create_extraction_chain, entity_resolution
+from examples.graph_rag.utils.visualization import (
     plot_token_distribution,
     plot_entity_count_vs_token_count,
     plot_node_degree_distribution
 )
-from gbx_lm.langchain.examples.graph_rag.utils.debug import print_community_info, print_summaries, print_percentiles
+from examples.graph_rag.utils.debug import print_community_info, print_summaries, print_percentiles
 
 from ..common import get_bert_mlx_embeddings
 
