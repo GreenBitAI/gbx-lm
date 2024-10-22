@@ -134,6 +134,19 @@ class MLXWorker(BaseModelWorker):
                 break
 
             detokenizer.add_token(token)
+            current_text = detokenizer.text
+
+            # Check if any stop pattern appears in the generated text
+            should_stop = False
+            for stop_pattern in stop:
+                if stop_pattern in current_text:
+                    # Find where the stop pattern begins
+                    stop_idx = current_text.find(stop_pattern)
+                    # Trim the text to exclude the stop pattern
+                    detokenizer.text = current_text[:stop_idx]
+                    finish_reason = "stop"
+                    should_stop = True
+                    break
 
             ret = {
                 "text": detokenizer.text,
@@ -149,6 +162,9 @@ class MLXWorker(BaseModelWorker):
 
             yield (json.dumps(ret) + "\0").encode()
 
+            if should_stop:
+                break
+
         detokenizer.finalize()
         ret = {
             "text": detokenizer.text,
@@ -159,6 +175,11 @@ class MLXWorker(BaseModelWorker):
         }
         yield (json.dumps(obj={**ret, **{"finish_reason": None}}) + "\0").encode()
         yield (json.dumps(ret) + "\0").encode()
+
+    async def generate(self, params):
+        async for x in self.generate_stream(params):
+            pass
+        return json.loads(x[:-1].decode())
 
     async def generate(self, params):
         async for x in self.generate_stream(params):
