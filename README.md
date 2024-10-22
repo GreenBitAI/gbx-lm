@@ -87,7 +87,7 @@ python -m gbx_lm.gba2mlx --hf-path GreenBitAI/yi-6b-chat-w4a16g128 --mlx-path yi
 ```
 
 ## Requirements
-- Python 3.x
+- Python 3.9/3.10
 - See `requirements.txt` or `environment.yml` for a complete list of dependencies
 
 ## Web Demo

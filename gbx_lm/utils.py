@@ -12,7 +12,6 @@ from typing import Any, Callable, Dict, Generator, List, Optional, Tuple, Type, 
 import mlx.core as mx
 import mlx.nn as nn
 from huggingface_hub import snapshot_download
-from huggingface_hub.utils._errors import RepositoryNotFoundError
 from transformers import PreTrainedTokenizer
 import transformers
 
@@ -96,7 +95,7 @@ def get_model_path(path_or_hf_repo: str, token=None, revision: Optional[str] = N
                     token=token
                 )
             )
-        except RepositoryNotFoundError:
+        except:
             raise ModelNotFoundError(
                 f"Model not found for path or HF repo: {path_or_hf_repo}.\n"
                 "Please make sure you specified the local path or Hugging Face"
