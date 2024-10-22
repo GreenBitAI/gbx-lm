@@ -49,6 +49,8 @@ class MLXWorker(BaseModelWorker):
         trust_remote_code: True or None = None,
         eos_token: str = None,
         adapter_file: Optional[str] = None,
+        temperature: float = 0.6,
+        max_tokens: int = 256
     ):
         super().__init__(
             controller_addr,
@@ -65,6 +67,8 @@ class MLXWorker(BaseModelWorker):
         )
 
         self.model_name = model_path
+        self.temperature = temperature
+        self.max_tokens = max_tokens
 
         # Building tokenizer_config
         tokenizer_config = {"trust_remote_code": True if trust_remote_code else None}
@@ -88,10 +92,10 @@ class MLXWorker(BaseModelWorker):
 
         context = params.pop("prompt")
         request_id = params.pop("request_id")
-        temperature = float(params.get("temperature", 0.6))
+        temperature = float(params.get("temperature", self.temperature))
         top_p = float(params.get("top_p", 1.0))
         frequency_penalty = float(params.get("frequency_penalty", 0.0))
-        max_new_tokens = params.get("max_new_tokens", 256)
+        max_new_tokens = params.get("max_new_tokens", self.max_tokens)
         stop_str = params.get("stop", None)
         stop_token_ids = params.get("stop_token_ids", None) or []
         if self.tokenizer.eos_token_id is not None:
@@ -273,6 +277,12 @@ if __name__ == "__main__":
         type=str,
         help="Optional path for the trained adapter weights.",
     )
+    parser.add_argument("--max_tokens", type=int, default=1024,
+        help="Maximum number of tokens for model output (default: 1024)"
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=0.6, help="Sampling temperature"
+    )
 
     args, unknown = parser.parse_known_args()
 
@@ -291,6 +301,8 @@ if __name__ == "__main__":
         args.conv_template,
         trust_remote_code = args.trust_remote_code,
         eos_token = args.eos_token,
-        adapter_file = args.adapter_file
+        adapter_file = args.adapter_file,
+        temperature = args.temperature,
+        max_tokens=args.max_tokens
     )
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
