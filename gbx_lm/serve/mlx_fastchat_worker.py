@@ -30,6 +30,10 @@ from fastchat.serve.model_worker import (
 
 import mlx.core as mx
 from gbx_lm import load, generate_step
+from gbx_lm.server_utils import (
+    stopping_criteria,
+    sequence_overlap
+)
 
 app = FastAPI()
 
@@ -127,26 +131,21 @@ class MLXWorker(BaseModelWorker):
             frequency_penalty, 20, top_p
         )
 
+        stop_id_sequences = [self.tokenizer.encode(st) for st in stop]
+        tokens = []
         for i in range(max_new_tokens):
             (token, prob, _) = await run_in_threadpool(next, iterator)
-            if token == self.mlx_tokenizer.eos_token_id:
+
+            detokenizer.add_token(token)
+
+            tokens.append(token)
+            stop_condition = stopping_criteria(tokens, stop_id_sequences, self.tokenizer.eos_token_id)
+            if stop_condition.stop_met:
                 finish_reason = "stop"
                 break
 
-            detokenizer.add_token(token)
-            current_text = detokenizer.text
-
-            # Check if any stop pattern appears in the generated text
-            should_stop = False
-            for stop_pattern in stop:
-                if stop_pattern in current_text:
-                    # Find where the stop pattern begins
-                    stop_idx = current_text.find(stop_pattern)
-                    # Trim the text to exclude the stop pattern
-                    detokenizer.text = current_text[:stop_idx]
-                    finish_reason = "stop"
-                    should_stop = True
-                    break
+            if any(sequence_overlap(tokens, sequence) for sequence in stop_id_sequences):
+                continue
 
             ret = {
                 "text": detokenizer.text,
@@ -161,9 +160,6 @@ class MLXWorker(BaseModelWorker):
             }
 
             yield (json.dumps(ret) + "\0").encode()
-
-            if should_stop:
-                break
 
         detokenizer.finalize()
         ret = {
