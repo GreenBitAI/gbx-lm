@@ -64,7 +64,8 @@ class ModelProvider:
         self.model_key = None
 
         tokenizer_config = {
-            "trust_remote_code": True if self.cli_args.trust_remote_code else None
+            "trust_remote_code": True if self.cli_args.trust_remote_code else None,
+            "eos_token": self.cli_args.eos_token
         }
         if self.cli_args.chat_template:
             tokenizer_config["chat_template"] = self.cli_args.chat_template
@@ -134,6 +135,7 @@ async def startup_event():
     parser.add_argument("--trust-remote-code", action="store_true", help="Enable trusting remote code for tokenizer")
     parser.add_argument("--chat-template", type=str, default="", help="Specify a chat template for the tokenizer")
     parser.add_argument("--use-default-chat-template", action="store_true", help="Use the default chat template")
+    parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
     args = parser.parse_args()
     model_provider = ModelProvider(args)
 
