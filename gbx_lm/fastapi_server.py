@@ -22,6 +22,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Dict, List, Literal, Optional, Union
+from contextlib import asynccontextmanager
 
 import mlx.core as mx
 from fastapi import FastAPI, HTTPException
@@ -37,8 +38,15 @@ from .server_utils import (
     convert_chat,
 )
 
-app = FastAPI()
+# Global configurations
+server_config = None
+model_provider = None
 
+class ServerConfig:
+    def __init__(self, host: str = "127.0.0.1", port: int = 8000, **kwargs):
+        self.host = host
+        self.port = port
+        self.model_config = argparse.Namespace(**kwargs)
 
 class ModelProvider:
     def __init__(self, cli_args: argparse.Namespace):
@@ -92,6 +100,53 @@ class ModelProvider:
 
         return self.model, self.tokenizer
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="MLX FastAPI Server.")
+    # Server configuration
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address to bind the server")
+    parser.add_argument("--port", type=int, default=8000, help="Port number to run the server")
+    # Model configuration
+    parser.add_argument("--model", type=str, help="The path to the MLX model weights, tokenizer, and config")
+    parser.add_argument("--adapter-path", type=str, help="Optional path for the trained adapter weights and config.")
+    parser.add_argument("--trust-remote-code", action="store_true", help="Enable trusting remote code for tokenizer")
+    parser.add_argument("--chat-template", type=str, default="", help="Specify a chat template for the tokenizer")
+    parser.add_argument("--use-default-chat-template", action="store_true", help="Use the default chat template")
+    parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
+    return parser.parse_args()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize configurations before the application starts
+    args = parse_args()
+    global server_config, model_provider
+
+    # Create server config with all arguments
+    server_config = ServerConfig(
+        host=args.host,
+        port=args.port,
+        model=args.model,
+        adapter_path=args.adapter_path,
+        trust_remote_code=args.trust_remote_code,
+        chat_template=args.chat_template,
+        use_default_chat_template=args.use_default_chat_template,
+        eos_token=args.eos_token
+    )
+
+    # Initialize model provider
+    model_provider = ModelProvider(server_config.model_config)
+
+    yield
+
+    # Cleanup code (if needed) goes here
+    pass
+
+app = FastAPI(
+    title="GBX-Model API",
+    description="API using gbx-lm models",
+    lifespan=lifespan
+)
+
 
 class CompletionRequest(BaseModel):
     model: str
@@ -99,14 +154,11 @@ class CompletionRequest(BaseModel):
     max_tokens: int = 100
     temperature: float = 1.0
     top_p: float = 1.0
-    n: int = 1
     stream: bool = False
     stop: Optional[Union[str, List[str]]] = None
-    presence_penalty: float = 0.0
-    frequency_penalty: float = 0.0
     logit_bias: Optional[Dict[str, float]] = None
-    user: Optional[str] = None
-
+    repetition_penalty: float = 1.0
+    repetition_context_size: int = 20
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -114,29 +166,30 @@ class ChatCompletionRequest(BaseModel):
     max_tokens: int = 100
     temperature: float = 1.0
     top_p: float = 1.0
-    n: int = 1
     stream: bool = False
     stop: Optional[Union[str, List[str]]] = None
-    presence_penalty: float = 0.0
-    frequency_penalty: float = 0.0
     logit_bias: Optional[Dict[str, float]] = None
-    user: Optional[str] = None
-
-
-model_provider = None
+    repetition_penalty: float = 1.0
+    repetition_context_size: int = 20
 
 
 @app.on_event("startup")
 async def startup_event():
-    global model_provider
+    global model_provider, server_config
     parser = argparse.ArgumentParser(description="MLX FastAPI Server.")
+    # server arguments
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address to bind the server")
+    parser.add_argument("--port", type=int, default=8000, help="Port number to run the server")
+    # model arguments
     parser.add_argument("--model", type=str, help="The path to the MLX model weights, tokenizer, and config")
     parser.add_argument("--adapter-path", type=str, help="Optional path for the trained adapter weights and config.")
     parser.add_argument("--trust-remote-code", action="store_true", help="Enable trusting remote code for tokenizer")
     parser.add_argument("--chat-template", type=str, default="", help="Specify a chat template for the tokenizer")
     parser.add_argument("--use-default-chat-template", action="store_true", help="Use the default chat template")
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
+
     args = parser.parse_args()
+    server_config = ServerConfig(args)
     model_provider = ModelProvider(args)
 
 
@@ -148,10 +201,12 @@ async def create_completion(request: CompletionRequest):
     prompt = mx.array(tokenizer.encode(request.prompt))
 
     if request.stream:
-        return StreamingResponse(stream_completion(prompt, request, model, tokenizer), media_type="text/event-stream")
+        return StreamingResponse(
+            stream_completion(prompt, request, model, tokenizer),
+            media_type="text/event-stream"
+        )
     else:
         return JSONResponse(generate_completion(prompt, request, model, tokenizer))
-
 
 @app.post("/v1/chat/completions")
 async def create_chat_completion(request: ChatCompletionRequest):
@@ -171,8 +226,10 @@ async def create_chat_completion(request: ChatCompletionRequest):
     prompt = mx.array(prompt)
 
     if request.stream:
-        return StreamingResponse(stream_chat_completion(prompt, request, model, tokenizer),
-                                 media_type="text/event-stream")
+        return StreamingResponse(
+            stream_chat_completion(prompt, request, model, tokenizer),
+            media_type="text/event-stream"
+        )
     else:
         return JSONResponse(generate_chat_completion(prompt, request, model, tokenizer))
 
@@ -185,7 +242,10 @@ async def stream_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
 
-    stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
+    stop_id_sequences = []
+    if request.stop:
+        stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
+        stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     for (token, _, _), _ in zip(
             generate_step(
@@ -193,6 +253,9 @@ async def stream_completion(prompt, request, model, tokenizer):
                 model=model,
                 temp=request.temperature,
                 top_p=request.top_p,
+                repetition_penalty=request.repetition_penalty,
+                repetition_context_size=request.repetition_context_size,
+                logit_bias=request.logit_bias,
             ),
             range(request.max_tokens),
     ):
@@ -234,7 +297,10 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
 
-    stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
+    stop_id_sequences = []
+    if request.stop:
+        stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
+        stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     for (token, _, _), _ in zip(
             generate_step(
@@ -242,6 +308,9 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
                 model=model,
                 temp=request.temperature,
                 top_p=request.top_p,
+                repetition_penalty=request.repetition_penalty,
+                repetition_context_size=request.repetition_context_size,
+                logit_bias=request.logit_bias,
             ),
             range(request.max_tokens),
     ):
@@ -282,7 +351,10 @@ def generate_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
 
-    stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
+    stop_id_sequences = []
+    if request.stop:
+        stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
+        stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     for (token, _, _), _ in zip(
             generate_step(
@@ -290,6 +362,9 @@ def generate_completion(prompt, request, model, tokenizer):
                 model=model,
                 temp=request.temperature,
                 top_p=request.top_p,
+                repetition_penalty=request.repetition_penalty,
+                repetition_context_size=request.repetition_context_size,
+                logit_bias=request.logit_bias,
             ),
             range(request.max_tokens),
     ):
@@ -332,7 +407,10 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
 
-    stop_id_sequences = [tokenizer.encode(stop) for stop in (request.stop or [])]
+    stop_id_sequences = []
+    if request.stop:
+        stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
+        stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     for (token, _, _), _ in zip(
             generate_step(
@@ -340,6 +418,9 @@ def generate_chat_completion(prompt, request, model, tokenizer):
                 model=model,
                 temp=request.temperature,
                 top_p=request.top_p,
+                repetition_penalty=request.repetition_penalty,
+                repetition_context_size=request.repetition_context_size,
+                logit_bias=request.logit_bias,
             ),
             range(request.max_tokens),
     ):
@@ -373,6 +454,10 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     }
 
 
-if __name__ == "__main__":
+def main():
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    args = parse_args()
+    uvicorn.run(app, host=args.host, port=args.port)
+
+if __name__ == "__main__":
+    main()

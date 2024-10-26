@@ -1,7 +1,7 @@
 import unittest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
-from gbx_lm.fastapi_server import app, ModelProvider
+from gbx_lm.fastapi_server import app
 import mlx.core as mx
 import json
 
