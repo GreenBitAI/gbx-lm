@@ -79,3 +79,49 @@ def convert_chat(messages: List[dict], role_mapping: Optional[dict] = None):
 
     prompt += role_mapping.get("assistant", "")
     return prompt.rstrip()
+
+
+def convert_model_name_to_url_path(model_name: str) -> str:
+    """
+    Convert a model name to a URL-safe path segment.
+    Examples:
+        "GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx" ->
+        "GreenBitAI-Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx"
+
+    Args:
+        model_name: Original model name/path
+
+    Returns:
+        URL-safe version of the model name
+    """
+    # Replace forward slashes with dashes
+    url_safe_name = model_name.replace("/", "-")
+
+    # Remove any special characters that might cause issues in URLs
+    # Keep alphanumeric characters, dashes, and underscores
+    url_safe_name = "".join(c for c in url_safe_name
+                            if c.isalnum() or c in "-_")
+
+    # Remove any repeated dashes
+    while "--" in url_safe_name:
+        url_safe_name = url_safe_name.replace("--", "-")
+
+    # Remove leading or trailing dashes
+    url_safe_name = url_safe_name.strip("-")
+
+    return url_safe_name
+
+
+def get_model_endpoint_path(model_name: str, endpoint_type: str) -> str:
+    """
+    Generate the full API endpoint path for a given model and endpoint type.
+
+    Args:
+        model_name: The name of the model
+        endpoint_type: Either "completions" or "chat/completions"
+
+    Returns:
+        Full API endpoint path
+    """
+    safe_name = convert_model_name_to_url_path(model_name)
+    return f"/v1/{safe_name}/{endpoint_type}"

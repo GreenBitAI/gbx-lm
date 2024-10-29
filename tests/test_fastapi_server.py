@@ -1,52 +1,69 @@
 import unittest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
-from gbx_lm.fastapi_server import app
 import mlx.core as mx
 import json
+from argparse import Namespace
+from gbx_lm.fastapi_server import create_app
 
 
-class DummyModelProvider:
+class DummyTokenizer:
     def __init__(self):
-        self.model = MagicMock()
-        self.tokenizer = MagicMock()
-        self.tokenizer.encode.side_effect = self.mock_encode
-        self.tokenizer.decode.return_value = "Test response"
-        self.tokenizer.eos_token_id = 50256
-        self.tokenizer.detokenizer = MagicMock()
-        self.tokenizer.detokenizer.text = "Test response"
-        self.tokenizer.detokenizer.last_segment = "Test"
+        self.encode = MagicMock(side_effect=lambda text, *args, **kwargs: mx.array([1, 2, 3, 4, 5]))
+        self.decode = MagicMock(return_value="Test response")
+        self.eos_token_id = 50256
+        self.detokenizer = MagicMock()
+        self.detokenizer.text = "Test response"
+        self.detokenizer.last_segment = "Test"
+        self.detokenizer.reset = MagicMock()
+        self.detokenizer.add_token = MagicMock()
+        self.detokenizer.finalize = MagicMock()
 
-        self.tokenizer.chat_template = "You are a helpful assistant.\n\nHuman: {input}\n\nAssistant:"
-        self.tokenizer.apply_chat_template = self.mock_apply_chat_template
+        self.chat_template = "You are a helpful assistant.\n\nHuman: {input}\n\nAssistant:"
+        self.apply_chat_template = MagicMock(side_effect=self._mock_apply_chat_template)
 
-    def mock_encode(self, text, *args, **kwargs):
-        return mx.array([1, 2, 3, 4, 5])
-
-    def mock_apply_chat_template(self, messages, *args, **kwargs):
-        formatted_messages = self.tokenizer.chat_template.format(input=messages[-1]['content'])
-        return self.mock_encode(formatted_messages)
-
-    def load(self, model, adapter=None):
-        assert model in ["default_model", "chat_model"]
-        return self.model, self.tokenizer
+    def _mock_apply_chat_template(self, messages, *args, **kwargs):
+        formatted_messages = self.chat_template.format(input=messages[-1]['content'])
+        return self.encode(formatted_messages)
 
 
-def mock_generate_step(*args, **kwargs):
-    yield (mx.array([1]), mx.array([0.5])), None, None
+@patch('gbx_lm.fastapi_server.load')
+def create_test_app(mock_load):
+    # Create mock model and tokenizer
+    mock_model = MagicMock()
+    mock_tokenizer = DummyTokenizer()
+    mock_load.return_value = (mock_model, mock_tokenizer)
+
+    # Create test arguments
+    args = Namespace(
+        host="127.0.0.1",
+        port=8000,
+        model=None,
+        model_list=["default_model", "chat_model"],
+        adapter_path=None,
+        trust_remote_code=False,
+        chat_template="",
+        use_default_chat_template=False,
+        eos_token="<|eot_id|>"
+    )
+
+    # Create app with test configuration
+    app, _ = create_app(args)
+    return app
 
 
 class TestFastAPIServer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.model_provider = DummyModelProvider()
-        cls.client = TestClient(app)
+        cls.app = create_test_app()
+        cls.client = TestClient(cls.app)
 
-    @patch('gbx_lm.fastapi_server.model_provider', new_callable=DummyModelProvider)
-    @patch('gbx_lm.fastapi_server.generate_step', mock_generate_step)
-    def test_create_completion(self, mock_model_provider):
+    @patch('gbx_lm.fastapi_server.generate_step')
+    def test_create_completion(self, mock_generate_step):
+        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+
         response = self.client.post(
-            "/v1/completions",
+            "/v1/default_model/completions",
             json={
                 "model": "default_model",
                 "prompt": "Once upon a time",
@@ -62,11 +79,12 @@ class TestFastAPIServer(unittest.TestCase):
         self.assertIn("choices", data)
         self.assertEqual(data["object"], "text_completion")
 
-    @patch('gbx_lm.fastapi_server.model_provider', new_callable=DummyModelProvider)
-    @patch('gbx_lm.fastapi_server.generate_step', mock_generate_step)
-    def test_create_chat_completion(self, mock_model_provider):
+    @patch('gbx_lm.fastapi_server.generate_step')
+    def test_create_chat_completion(self, mock_generate_step):
+        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+
         response = self.client.post(
-            "/v1/chat/completions",
+            "/v1/chat_model/chat/completions",
             json={
                 "model": "chat_model",
                 "messages": [
@@ -87,12 +105,13 @@ class TestFastAPIServer(unittest.TestCase):
         self.assertEqual(data["choices"][0]["message"]["role"], "assistant")
         self.assertIsNotNone(data["choices"][0]["message"]["content"])
 
-    @patch('gbx_lm.fastapi_server.model_provider', new_callable=DummyModelProvider)
-    @patch('gbx_lm.fastapi_server.generate_step', mock_generate_step)
-    def test_stream_completion(self, mock_model_provider):
+    @patch('gbx_lm.fastapi_server.generate_step')
+    def test_stream_completion(self, mock_generate_step):
+        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+
         with self.client.stream(
                 "POST",
-                "/v1/completions",
+                "/v1/default_model/completions",
                 json={
                     "model": "default_model",
                     "prompt": "Once upon a time",
@@ -117,12 +136,13 @@ class TestFastAPIServer(unittest.TestCase):
 
             self.assertEqual(non_empty_events[-1], 'data: [DONE]')
 
-    @patch('gbx_lm.fastapi_server.model_provider', new_callable=DummyModelProvider)
-    @patch('gbx_lm.fastapi_server.generate_step', mock_generate_step)
-    def test_stream_chat_completion(self, mock_model_provider):
+    @patch('gbx_lm.fastapi_server.generate_step')
+    def test_stream_chat_completion(self, mock_generate_step):
+        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+
         with self.client.stream(
                 "POST",
-                "/v1/chat/completions",
+                "/v1/chat_model/chat/completions",
                 json={
                     "model": "chat_model",
                     "messages": [

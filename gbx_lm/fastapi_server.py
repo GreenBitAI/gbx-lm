@@ -21,8 +21,7 @@ import json
 import time
 import uuid
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Union
-from contextlib import asynccontextmanager
+from typing import Dict, List, Optional, Union, Set
 
 import mlx.core as mx
 from fastapi import FastAPI, HTTPException
@@ -36,69 +35,13 @@ from .server_utils import (
     stopping_criteria,
     sequence_overlap,
     convert_chat,
+    get_model_endpoint_path
 )
 
 # Global configurations
 server_config = None
 model_provider = None
 
-class ServerConfig:
-    def __init__(self, host: str = "127.0.0.1", port: int = 8000, **kwargs):
-        self.host = host
-        self.port = port
-        self.model_config = argparse.Namespace(**kwargs)
-
-class ModelProvider:
-    def __init__(self, cli_args: argparse.Namespace):
-        self.cli_args = cli_args
-        self.model_key = None
-        self.model = None
-        self.tokenizer = None
-
-        if self.cli_args.model is not None:
-            self.load("default_model")
-
-    def _validate_model_path(self, model_path: str):
-        model_path = Path(model_path)
-        if model_path.exists() and not model_path.is_relative_to(Path.cwd()):
-            raise RuntimeError("Local models must be relative to the current working dir.")
-
-    def load(self, model_path, adapter_path=None):
-        if self.model_key == (model_path, adapter_path):
-            return self.model, self.tokenizer
-
-        self.model = None
-        self.tokenizer = None
-        self.model_key = None
-
-        tokenizer_config = {
-            "trust_remote_code": True if self.cli_args.trust_remote_code else None,
-            "eos_token": self.cli_args.eos_token
-        }
-        if self.cli_args.chat_template:
-            tokenizer_config["chat_template"] = self.cli_args.chat_template
-
-        if model_path == "default_model" and self.cli_args.model is not None:
-            model, tokenizer = load(
-                self.cli_args.model,
-                adapter_path=(adapter_path if adapter_path else self.cli_args.adapter_path),
-                tokenizer_config=tokenizer_config,
-            )
-        else:
-            self._validate_model_path(model_path)
-            model, tokenizer = load(
-                model_path, adapter_path=adapter_path, tokenizer_config=tokenizer_config
-            )
-
-        if self.cli_args.use_default_chat_template:
-            if tokenizer.chat_template is None:
-                tokenizer.chat_template = tokenizer.default_chat_template
-
-        self.model_key = (model_path, adapter_path)
-        self.model = model
-        self.tokenizer = tokenizer
-
-        return self.model, self.tokenizer
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MLX FastAPI Server.")
@@ -107,25 +50,86 @@ def parse_args():
     parser.add_argument("--port", type=int, default=8000, help="Port number to run the server")
     # Model configuration
     parser.add_argument("--model", type=str, help="The path to the MLX model weights, tokenizer, and config")
-    parser.add_argument("--adapter-path", type=str, help="Optional path for the trained adapter weights and config.")
-    parser.add_argument("--trust-remote-code", action="store_true", help="Enable trusting remote code for tokenizer")
-    parser.add_argument("--chat-template", type=str, default="", help="Specify a chat template for the tokenizer")
-    parser.add_argument("--use-default-chat-template", action="store_true", help="Use the default chat template")
+    parser.add_argument("--model_list", type=str, nargs="+", help="List of model paths to serve")
+    parser.add_argument("--adapter_path", type=str, help="Optional path for the trained adapter weights and config.")
+    parser.add_argument("--trust_remote_code", action="store_true", help="Enable trusting remote code for tokenizer")
+    parser.add_argument("--chat_template", type=str, default="", help="Specify a chat template for the tokenizer")
+    parser.add_argument("--use_default_chat_template", action="store_true", help="Use the default chat template")
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
     return parser.parse_args()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Initialize configurations before the application starts
-    args = parse_args()
-    global server_config, model_provider
+class ServerConfig:
+    def __init__(self, host: str = "127.0.0.1", port: int = 8000, **kwargs):
+        self.host = host
+        self.port = port
+        self.model_config = argparse.Namespace(**kwargs)
+
+        # Store the list of models to serve
+        self.models_to_serve: Set[str] = set()
+        if kwargs.get("model_list"):
+            self.models_to_serve.update(kwargs["model_list"])
+        elif kwargs.get("model"):
+            self.models_to_serve.add(kwargs["model"])
+
+
+class ModelProvider:
+    def __init__(self, cli_args: argparse.Namespace):
+        self.cli_args = cli_args
+        self.model_cache: Dict[str, tuple] = {}  # Cache for loaded models
+
+        # Initialize with default model if specified
+        if self.cli_args.model_list:
+            for model_path in self.cli_args.model_list:
+                self.load(model_path)
+        elif self.cli_args.model is not None:
+            self.load(self.cli_args.model)
+
+    def _validate_model_path(self, model_path: str):
+        model_path = Path(model_path)
+        if model_path.exists() and not model_path.is_relative_to(Path.cwd()):
+            raise RuntimeError("Local models must be relative to the current working dir.")
+
+    def load(self, model_path, adapter_path=None):
+        cache_key = (model_path, adapter_path)
+        if cache_key in self.model_cache:
+            return self.model_cache[cache_key]
+
+        tokenizer_config = {
+            "trust_remote_code": True if self.cli_args.trust_remote_code else None,
+            "eos_token": self.cli_args.eos_token
+        }
+        if self.cli_args.chat_template:
+            tokenizer_config["chat_template"] = self.cli_args.chat_template
+
+        self._validate_model_path(model_path)
+        model, tokenizer = load(
+            model_path,
+            adapter_path=(adapter_path if adapter_path else self.cli_args.adapter_path),
+            tokenizer_config=tokenizer_config,
+        )
+
+        if self.cli_args.use_default_chat_template:
+            if tokenizer.chat_template is None:
+                tokenizer.chat_template = tokenizer.default_chat_template
+
+        self.model_cache[cache_key] = (model, tokenizer)
+        return model, tokenizer
+
+
+def create_app(args):
+    """Create and configure the FastAPI application with routes."""
+    app = FastAPI(
+        title="GBX-Model API",
+        description="API using gbx-lm models",
+    )
 
     # Create server config with all arguments
     server_config = ServerConfig(
         host=args.host,
         port=args.port,
         model=args.model,
+        model_list=args.model_list,
         adapter_path=args.adapter_path,
         trust_remote_code=args.trust_remote_code,
         chat_template=args.chat_template,
@@ -136,16 +140,70 @@ async def lifespan(app: FastAPI):
     # Initialize model provider
     model_provider = ModelProvider(server_config.model_config)
 
-    yield
+    # Helper function to create endpoints for a specific model
+    def create_model_endpoints(model_path: str):
+        completion_path = get_model_endpoint_path(model_path, "completions")
+        chat_completion_path = get_model_endpoint_path(model_path, "chat/completions")
 
-    # Cleanup code (if needed) goes here
-    pass
+        @app.post(completion_path, response_model=Dict)
+        async def create_completion(request: CompletionRequest):
+            model, tokenizer = model_provider.load(model_path)
 
-app = FastAPI(
-    title="GBX-Model API",
-    description="API using gbx-lm models",
-    lifespan=lifespan
-)
+            prompt = mx.array(tokenizer.encode(request.prompt))
+
+            if request.stream:
+                return StreamingResponse(
+                    stream_completion(prompt, request, model, tokenizer),
+                    media_type="text/event-stream"
+                )
+            else:
+                return JSONResponse(generate_completion(prompt, request, model, tokenizer))
+
+        @app.post(chat_completion_path, response_model=Dict)
+        async def create_chat_completion(request: ChatCompletionRequest):
+            model, tokenizer = model_provider.load(model_path)
+
+            if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+                prompt = tokenizer.apply_chat_template(
+                    request.messages,
+                    tokenize=True,
+                    add_generation_prompt=True,
+                )
+            else:
+                prompt = convert_chat(request.messages)
+                prompt = tokenizer.encode(prompt)
+
+            prompt = mx.array(prompt)
+
+            if request.stream:
+                return StreamingResponse(
+                    stream_chat_completion(prompt, request, model, tokenizer),
+                    media_type="text/event-stream"
+                )
+            else:
+                return JSONResponse(generate_chat_completion(prompt, request, model, tokenizer))
+
+    # Create endpoints for each model
+    for model_path in server_config.models_to_serve:
+        create_model_endpoints(model_path)
+
+    # Add root endpoint for API information
+    @app.get("/")
+    async def root():
+        return {
+            "api": "GBX-Model API",
+            "version": "1.0",
+            "models": list(server_config.models_to_serve),
+            "endpoints": [
+                             get_model_endpoint_path(model, "completions")
+                             for model in server_config.models_to_serve
+                         ] + [
+                             get_model_endpoint_path(model, "chat/completions")
+                             for model in server_config.models_to_serve
+                         ]
+        }
+
+    return app, server_config
 
 
 class CompletionRequest(BaseModel):
@@ -171,67 +229,6 @@ class ChatCompletionRequest(BaseModel):
     logit_bias: Optional[Dict[str, float]] = None
     repetition_penalty: float = 1.0
     repetition_context_size: int = 20
-
-
-@app.on_event("startup")
-async def startup_event():
-    global model_provider, server_config
-    parser = argparse.ArgumentParser(description="MLX FastAPI Server.")
-    # server arguments
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address to bind the server")
-    parser.add_argument("--port", type=int, default=8000, help="Port number to run the server")
-    # model arguments
-    parser.add_argument("--model", type=str, help="The path to the MLX model weights, tokenizer, and config")
-    parser.add_argument("--adapter-path", type=str, help="Optional path for the trained adapter weights and config.")
-    parser.add_argument("--trust-remote-code", action="store_true", help="Enable trusting remote code for tokenizer")
-    parser.add_argument("--chat-template", type=str, default="", help="Specify a chat template for the tokenizer")
-    parser.add_argument("--use-default-chat-template", action="store_true", help="Use the default chat template")
-    parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
-
-    args = parser.parse_args()
-    server_config = ServerConfig(args)
-    model_provider = ModelProvider(args)
-
-
-@app.post("/v1/completions")
-async def create_completion(request: CompletionRequest):
-    global model_provider
-    model, tokenizer = model_provider.load(request.model)
-
-    prompt = mx.array(tokenizer.encode(request.prompt))
-
-    if request.stream:
-        return StreamingResponse(
-            stream_completion(prompt, request, model, tokenizer),
-            media_type="text/event-stream"
-        )
-    else:
-        return JSONResponse(generate_completion(prompt, request, model, tokenizer))
-
-@app.post("/v1/chat/completions")
-async def create_chat_completion(request: ChatCompletionRequest):
-    global model_provider
-    model, tokenizer = model_provider.load(request.model)
-
-    if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-        prompt = tokenizer.apply_chat_template(
-            request.messages,
-            tokenize=True,
-            add_generation_prompt=True,
-        )
-    else:
-        prompt = convert_chat(request.messages)
-        prompt = tokenizer.encode(prompt)
-
-    prompt = mx.array(prompt)
-
-    if request.stream:
-        return StreamingResponse(
-            stream_chat_completion(prompt, request, model, tokenizer),
-            media_type="text/event-stream"
-        )
-    else:
-        return JSONResponse(generate_chat_completion(prompt, request, model, tokenizer))
 
 
 async def stream_completion(prompt, request, model, tokenizer):
@@ -457,7 +454,8 @@ def generate_chat_completion(prompt, request, model, tokenizer):
 def main():
     import uvicorn
     args = parse_args()
-    uvicorn.run(app, host=args.host, port=args.port)
+    app, server_config = create_app(args)
+    uvicorn.run(app, host=server_config.host, port=server_config.port)
 
 if __name__ == "__main__":
     main()
