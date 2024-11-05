@@ -117,6 +117,13 @@ class ModelProvider:
         return model, tokenizer
 
 
+def convert_hidden_states_to_list(hidden_states):
+    """Convert MLX array hidden states to nested Python lists."""
+    if hidden_states is None:
+        return None
+    return [h.tolist() if isinstance(h, mx.array) else h for h in hidden_states]
+
+
 def create_app(args):
     """Create and configure the FastAPI application with routes."""
     app = FastAPI(
@@ -217,6 +224,7 @@ class CompletionRequest(BaseModel):
     logit_bias: Optional[Dict[str, float]] = None
     repetition_penalty: float = 1.0
     repetition_context_size: int = 20
+    with_hidden_states: bool = False
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -229,6 +237,7 @@ class ChatCompletionRequest(BaseModel):
     logit_bias: Optional[Dict[str, float]] = None
     repetition_penalty: float = 1.0
     repetition_context_size: int = 20
+    with_hidden_states: bool = False
 
 
 async def stream_completion(prompt, request, model, tokenizer):
@@ -347,13 +356,14 @@ def generate_completion(prompt, request, model, tokenizer):
     detokenizer = tokenizer.detokenizer
     detokenizer.reset()
     tokens = []
+    all_hidden_states = [] if request.with_hidden_states else None
 
     stop_id_sequences = []
     if request.stop:
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for (token, _, _), _ in zip(
+    for (token, _, hidden_states), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,
@@ -362,6 +372,7 @@ def generate_completion(prompt, request, model, tokenizer):
                 repetition_penalty=request.repetition_penalty,
                 repetition_context_size=request.repetition_context_size,
                 logit_bias=request.logit_bias,
+                with_hidden_states=request.with_hidden_states
             ),
             range(request.max_tokens),
     ):
@@ -375,6 +386,13 @@ def generate_completion(prompt, request, model, tokenizer):
     detokenizer.finalize()
     text = detokenizer.text
 
+    if request.with_hidden_states and hidden_states is not None:
+        # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
+        avg_hs = hidden_states.mean(axis=1)
+        all_hidden_states.append(avg_hs)
+    # Convert hidden states to regular Python lists before JSON serialization
+    serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
+
     return {
         "id": request_id,
         "object": "text_completion",
@@ -386,6 +404,7 @@ def generate_completion(prompt, request, model, tokenizer):
                 "index": 0,
                 "logprobs": None,
                 "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
+                "hidden_states": serializable_hidden_states
             }
         ],
         "usage": {
@@ -403,13 +422,14 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer = tokenizer.detokenizer
     detokenizer.reset()
     tokens = []
+    all_hidden_states = [] if request.with_hidden_states else None
 
     stop_id_sequences = []
     if request.stop:
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for (token, _, _), _ in zip(
+    for (token, _, hidden_states), _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,
@@ -418,6 +438,7 @@ def generate_chat_completion(prompt, request, model, tokenizer):
                 repetition_penalty=request.repetition_penalty,
                 repetition_context_size=request.repetition_context_size,
                 logit_bias=request.logit_bias,
+                with_hidden_states=request.with_hidden_states
             ),
             range(request.max_tokens),
     ):
@@ -431,6 +452,13 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer.finalize()
     text = detokenizer.text
 
+    if request.with_hidden_states and hidden_states is not None:
+        # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
+        avg_hs = hidden_states.mean(axis=1)
+        all_hidden_states.append(avg_hs)
+    # Convert hidden states to regular Python lists before JSON serialization
+    serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
+
     return {
         "id": request_id,
         "object": "chat.completion",
@@ -438,7 +466,11 @@ def generate_chat_completion(prompt, request, model, tokenizer):
         "model": request.model,
         "choices": [
             {
-                "message": {"role": "assistant", "content": text},
+                "message": {
+                    "role": "assistant",
+                    "content": text,
+                    "hidden_states": serializable_hidden_states
+                },
                 "index": 0,
                 "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
             }
