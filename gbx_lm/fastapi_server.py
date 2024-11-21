@@ -48,6 +48,12 @@ server_config = None
 model_provider = None
 logger = None
 
+# Global UE confidence scorers
+UE_MODELS = {
+    "qwen": "qwen2.5",
+    "llama": "llama-3"
+}
+_confidence_scorers = {}
 
 def setup_logging():
     """Configure logging for the FastAPI server."""
@@ -89,6 +95,7 @@ def parse_args():
     parser.add_argument("--chat_template", type=str, default="", help="Specify a chat template for the tokenizer")
     parser.add_argument("--use_default_chat_template", action="store_true", help="Use the default chat template")
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
+    parser.add_argument("--ue_parameter_path", type=str, default="db/router.db", help="Path to the method parameters database")
     return parser.parse_args()
 
 
@@ -140,7 +147,7 @@ class ModelProvider:
 
             tokenizer_config = {
                 "trust_remote_code": True if self.cli_args.trust_remote_code else None,
-                "eos_token": "<|im_end|>" if model_path.__contains__("Qwen") else "<|eot_id|>",
+                "eos_token": "<|im_end|>" if model_path.lower().__contains__("qwen") else "<|eot_id|>",
             }
             if self.cli_args.chat_template:
                 tokenizer_config["chat_template"] = self.cli_args.chat_template
@@ -165,7 +172,7 @@ class ModelProvider:
 
 def convert_hidden_states_to_list(hidden_states):
     """Convert MLX array hidden states to nested Python lists."""
-    if hidden_states is None:
+    if hidden_states is None or hidden_states == []:
         return None
     return [h.tolist() if isinstance(h, mx.array) else h for h in hidden_states]
 
@@ -176,6 +183,17 @@ def create_app(args):
     # Initialize logging
     global logger
     logger = setup_logging()
+
+    try:
+        from .routing import ConfidenceScorer
+        for model_family, model_id in UE_MODELS.items():
+            scorer = ConfidenceScorer(
+                parameters_path=args.ue_parameter_path,
+                model_id=model_id
+            )
+            _confidence_scorers[model_family] = scorer
+    except Exception as e:
+        logger.error(f"Error loading confidence scorers: {str(e)}")
 
     app = FastAPI(
         title="GBX-Model API",
@@ -316,6 +334,7 @@ class CompletionRequest(BaseModel):
     repetition_penalty: float = 1.0
     repetition_context_size: int = 20
     with_hidden_states: bool = False
+    remote_score: bool = True
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -329,6 +348,7 @@ class ChatCompletionRequest(BaseModel):
     repetition_penalty: float = 1.0
     repetition_context_size: int = 20
     with_hidden_states: bool = False
+    remote_score: bool = True
 
 
 async def stream_completion(prompt, request, model, tokenizer):
@@ -477,10 +497,18 @@ def generate_completion(prompt, request, model, tokenizer):
     detokenizer.finalize()
     text = detokenizer.text
 
+    score = None
     if request.with_hidden_states and hidden_states is not None:
         # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
         avg_hs = hidden_states.mean(axis=1)
-        all_hidden_states.append(avg_hs)
+        if request.remote_score:
+            model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+            scorer = _confidence_scorers.get(model_key)
+            if scorer:
+                score = scorer.calculate_confidence(avg_hs.tolist())
+        else:
+            all_hidden_states.append(avg_hs)
+
     # Convert hidden states to regular Python lists before JSON serialization
     serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
 
@@ -495,7 +523,8 @@ def generate_completion(prompt, request, model, tokenizer):
                 "index": 0,
                 "logprobs": None,
                 "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
-                "hidden_states": serializable_hidden_states
+                "hidden_states": serializable_hidden_states,
+                "confidence_score": score
             }
         ],
         "usage": {
@@ -514,8 +543,8 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
     all_hidden_states = [] if request.with_hidden_states else None
-
     stop_id_sequences = []
+
     if request.stop:
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
@@ -543,10 +572,18 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer.finalize()
     text = detokenizer.text
 
+    score = None
     if request.with_hidden_states and hidden_states is not None:
         # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
         avg_hs = hidden_states.mean(axis=1)
-        all_hidden_states.append(avg_hs)
+        if request.remote_score:
+            model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+            scorer = _confidence_scorers.get(model_key)
+            if scorer:
+                score = scorer.calculate_confidence(avg_hs.tolist())
+        else:
+            all_hidden_states.append(avg_hs)
+
     # Convert hidden states to regular Python lists before JSON serialization
     serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
 
@@ -560,7 +597,8 @@ def generate_chat_completion(prompt, request, model, tokenizer):
                 "message": {
                     "role": "assistant",
                     "content": text,
-                    "hidden_states": serializable_hidden_states
+                    "hidden_states": serializable_hidden_states,
+                    "confidence_score": score
                 },
                 "index": 0,
                 "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
