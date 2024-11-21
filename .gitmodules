@@ -1,0 +1,3 @@
+[submodule "gbx_lm/routing/libra_router"]
+	path = gbx_lm/routing/libra_router
+	url = git@github.com:GreenBitAI/Libra-Router.git

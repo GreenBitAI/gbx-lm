@@ -140,7 +140,7 @@ class ModelProvider:
 
             tokenizer_config = {
                 "trust_remote_code": True if self.cli_args.trust_remote_code else None,
-                "eos_token": self.cli_args.eos_token
+                "eos_token": "<|im_end|>" if model_path.__contains__("Qwen") else "<|eot_id|>",
             }
             if self.cli_args.chat_template:
                 tokenizer_config["chat_template"] = self.cli_args.chat_template
