@@ -15,7 +15,9 @@
 # - Type hints: Fully utilized Python's type hints to enhance code readability and maintainability.
 # - Configuration management: Retained the original command-line argument configuration method, but it can be easily extended to use environment variables or configuration files.
 
-
+import os
+import logging
+from datetime import datetime
 import argparse
 import json
 import time
@@ -30,6 +32,9 @@ from pydantic import BaseModel, Field
 
 from .utils import generate_step, load
 
+PROJECT_ROOT = Path(__file__).parent.parent
+LOG_DIR = PROJECT_ROOT / "logs"
+
 
 from .server_utils import (
     stopping_criteria,
@@ -41,6 +46,40 @@ from .server_utils import (
 # Global configurations
 server_config = None
 model_provider = None
+logger = None
+
+# Global UE confidence scorers
+UE_MODELS = {
+    "qwen": "qwen2.5",
+    "llama": "llama-3"
+}
+_confidence_scorers = {}
+
+def setup_logging():
+    """Configure logging for the FastAPI server."""
+    if not os.path.exists(LOG_DIR):
+        os.makedirs(LOG_DIR)
+
+    # Create timestamp for log filename
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = LOG_DIR / f"server_{timestamp}.log"
+
+    # Configure logging format
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(log_file),
+            logging.StreamHandler()  # Also log to console
+        ]
+    )
+
+    # Create logger
+    logger = logging.getLogger("gbx_server")
+
+    # Log startup message
+    logger.info(f"Starting GBX-Model API server. Log file: {log_file}")
+    return logger
 
 
 def parse_args():
@@ -56,6 +95,7 @@ def parse_args():
     parser.add_argument("--chat_template", type=str, default="", help="Specify a chat template for the tokenizer")
     parser.add_argument("--use_default_chat_template", action="store_true", help="Use the default chat template")
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
+    parser.add_argument("--ue_parameter_path", type=str, default="db/router.db", help="Path to the method parameters database")
     return parser.parse_args()
 
 
@@ -79,57 +119,103 @@ class ModelProvider:
         self.model_cache: Dict[str, tuple] = {}  # Cache for loaded models
 
         # Initialize with default model if specified
-        if self.cli_args.model_list:
-            for model_path in self.cli_args.model_list:
-                self.load(model_path)
-        elif self.cli_args.model is not None:
-            self.load(self.cli_args.model)
+        try:
+            if self.cli_args.model_list:
+                for model_path in self.cli_args.model_list:
+                    self.load(model_path)
+            elif self.cli_args.model is not None:
+                self.load(self.cli_args.model)
+        except Exception as e:
+            logger.error(f"Failed to initialize ModelProvider: {str(e)}")
+            raise
 
     def _validate_model_path(self, model_path: str):
-        model_path = Path(model_path)
-        if model_path.exists() and not model_path.is_relative_to(Path.cwd()):
-            raise RuntimeError("Local models must be relative to the current working dir.")
+        try:
+            model_path = Path(model_path)
+            if model_path.exists() and not model_path.is_relative_to(Path.cwd()):
+                logger.error(f"Invalid model path: {model_path}")
+                raise RuntimeError("Local models must be relative to the current working dir.")
+        except Exception as e:
+            logger.error(f"Model path validation failed: {str(e)}")
+            raise
 
     def load(self, model_path, adapter_path=None):
-        cache_key = (model_path, adapter_path)
-        if cache_key in self.model_cache:
-            return self.model_cache[cache_key]
+        try:
+            cache_key = (model_path, adapter_path)
+            if cache_key in self.model_cache:
+                return self.model_cache[cache_key]
 
-        tokenizer_config = {
-            "trust_remote_code": True if self.cli_args.trust_remote_code else None,
-            "eos_token": self.cli_args.eos_token
-        }
-        if self.cli_args.chat_template:
-            tokenizer_config["chat_template"] = self.cli_args.chat_template
+            tokenizer_config = {
+                "trust_remote_code": True if self.cli_args.trust_remote_code else None,
+                "eos_token": "<|im_end|>" if model_path.lower().__contains__("qwen") else "<|eot_id|>",
+            }
+            if self.cli_args.chat_template:
+                tokenizer_config["chat_template"] = self.cli_args.chat_template
 
-        self._validate_model_path(model_path)
-        model, tokenizer = load(
-            model_path,
-            adapter_path=(adapter_path if adapter_path else self.cli_args.adapter_path),
-            tokenizer_config=tokenizer_config,
-        )
+            self._validate_model_path(model_path)
+            model, tokenizer = load(
+                model_path,
+                adapter_path=(adapter_path if adapter_path else self.cli_args.adapter_path),
+                tokenizer_config=tokenizer_config,
+            )
 
-        if self.cli_args.use_default_chat_template:
-            if tokenizer.chat_template is None:
-                tokenizer.chat_template = tokenizer.default_chat_template
+            if self.cli_args.use_default_chat_template:
+                if tokenizer.chat_template is None:
+                    tokenizer.chat_template = tokenizer.default_chat_template
 
-        self.model_cache[cache_key] = (model, tokenizer)
-        return model, tokenizer
-
+            self.model_cache[cache_key] = (model, tokenizer)
+            logger.info(f"Successfully loaded model from {model_path}")
+            return model, tokenizer
+        except Exception as e:
+            logger.error(f"Failed to load model from {model_path}: {str(e)}")
+            raise
 
 def convert_hidden_states_to_list(hidden_states):
     """Convert MLX array hidden states to nested Python lists."""
-    if hidden_states is None:
+    if hidden_states is None or hidden_states == []:
         return None
     return [h.tolist() if isinstance(h, mx.array) else h for h in hidden_states]
 
 
 def create_app(args):
     """Create and configure the FastAPI application with routes."""
+
+    # Initialize logging
+    global logger
+    logger = setup_logging()
+
+    try:
+        from .routing import ConfidenceScorer
+        for model_family, model_id in UE_MODELS.items():
+            scorer = ConfidenceScorer(
+                parameters_path=args.ue_parameter_path,
+                model_id=model_id
+            )
+            _confidence_scorers[model_family] = scorer
+    except Exception as e:
+        logger.error(f"Error loading confidence scorers: {str(e)}")
+
     app = FastAPI(
         title="GBX-Model API",
         description="API using gbx-lm models",
     )
+
+    # Add logging middleware
+    @app.middleware("http")
+    async def log_requests(request, call_next):
+        start_time = time.time()
+        try:
+            response = await call_next(request)
+            duration = time.time() - start_time
+            logger.info(
+                f"Request: {request.method} {request.url.path} "
+                f"Status: {response.status_code} "
+                f"Duration: {duration:.2f}s"
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Request failed: {str(e)}")
+            raise
 
     # Create server config with all arguments
     server_config = ServerConfig(
@@ -154,63 +240,86 @@ def create_app(args):
 
         @app.post(completion_path, response_model=Dict)
         async def create_completion(request: CompletionRequest):
-            model, tokenizer = model_provider.load(model_path)
+            try:
+                model, tokenizer = model_provider.load(model_path)
+                prompt = mx.array(tokenizer.encode(request.prompt))
 
-            prompt = mx.array(tokenizer.encode(request.prompt))
-
-            if request.stream:
-                return StreamingResponse(
-                    stream_completion(prompt, request, model, tokenizer),
-                    media_type="text/event-stream"
-                )
-            else:
-                return JSONResponse(generate_completion(prompt, request, model, tokenizer))
+                if request.stream:
+                    return StreamingResponse(
+                        stream_completion(prompt, request, model, tokenizer),
+                        media_type="text/event-stream"
+                    )
+                else:
+                    return JSONResponse(generate_completion(prompt, request, model, tokenizer))
+            except Exception as e:
+                logger.error(f"Completion request failed: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e))
 
         @app.post(chat_completion_path, response_model=Dict)
         async def create_chat_completion(request: ChatCompletionRequest):
-            model, tokenizer = model_provider.load(model_path)
+            try:
+                model, tokenizer = model_provider.load(model_path)
 
-            if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-                prompt = tokenizer.apply_chat_template(
-                    request.messages,
-                    tokenize=True,
-                    add_generation_prompt=True,
-                )
-            else:
-                prompt = convert_chat(request.messages)
-                prompt = tokenizer.encode(prompt)
+                if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+                    prompt = tokenizer.apply_chat_template(
+                        request.messages,
+                        tokenize=True,
+                        add_generation_prompt=True,
+                    )
+                else:
+                    prompt = convert_chat(request.messages)
+                    prompt = tokenizer.encode(prompt)
 
-            prompt = mx.array(prompt)
+                prompt = mx.array(prompt)
 
-            if request.stream:
-                return StreamingResponse(
-                    stream_chat_completion(prompt, request, model, tokenizer),
-                    media_type="text/event-stream"
-                )
-            else:
-                return JSONResponse(generate_chat_completion(prompt, request, model, tokenizer))
+                if request.stream:
+                    return StreamingResponse(
+                        stream_chat_completion(prompt, request, model, tokenizer),
+                        media_type="text/event-stream"
+                    )
+                else:
+                    return JSONResponse(generate_chat_completion(prompt, request, model, tokenizer))
+            except Exception as e:
+                logger.error(f"Chat completion request failed: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e))
 
     # Create endpoints for each model
     for model_path in server_config.models_to_serve:
-        create_model_endpoints(model_path)
+        try:
+            create_model_endpoints(model_path)
+        except Exception as e:
+            logger.error(f"Failed to create endpoints for model {model_path}: {str(e)}")
+            raise
 
     # Add root endpoint for API information
     @app.get("/")
     async def root():
-        return {
-            "api": "GBX-Model API",
-            "version": "1.0",
-            "models": list(server_config.models_to_serve),
-            "endpoints": [
-                             get_model_endpoint_path(model, "completions")
-                             for model in server_config.models_to_serve
-                         ] + [
-                             get_model_endpoint_path(model, "chat/completions")
-                             for model in server_config.models_to_serve
-                         ]
-        }
+        try:
+            return {
+                "api": "GBX-Model API",
+                "version": "1.0",
+                "models": list(server_config.models_to_serve),
+                "endpoints": [
+                    get_model_endpoint_path(model, "completions")
+                    for model in server_config.models_to_serve
+                ] + [
+                    get_model_endpoint_path(model, "chat/completions")
+                    for model in server_config.models_to_serve
+                ]
+            }
+        except Exception as e:
+            logger.error(f"Root endpoint request failed: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
 
-    return app, server_config
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request, exc):
+        logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"message": "Internal server error"}
+        )
+
+    return app, server_config, logger
 
 
 class CompletionRequest(BaseModel):
@@ -225,6 +334,7 @@ class CompletionRequest(BaseModel):
     repetition_penalty: float = 1.0
     repetition_context_size: int = 20
     with_hidden_states: bool = False
+    remote_score: bool = True
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -238,6 +348,7 @@ class ChatCompletionRequest(BaseModel):
     repetition_penalty: float = 1.0
     repetition_context_size: int = 20
     with_hidden_states: bool = False
+    remote_score: bool = True
 
 
 async def stream_completion(prompt, request, model, tokenizer):
@@ -386,10 +497,18 @@ def generate_completion(prompt, request, model, tokenizer):
     detokenizer.finalize()
     text = detokenizer.text
 
+    score = None
     if request.with_hidden_states and hidden_states is not None:
         # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
         avg_hs = hidden_states.mean(axis=1)
-        all_hidden_states.append(avg_hs)
+        if request.remote_score:
+            model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+            scorer = _confidence_scorers.get(model_key)
+            if scorer:
+                score = scorer.calculate_confidence(avg_hs.tolist())
+        else:
+            all_hidden_states.append(avg_hs)
+
     # Convert hidden states to regular Python lists before JSON serialization
     serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
 
@@ -404,7 +523,8 @@ def generate_completion(prompt, request, model, tokenizer):
                 "index": 0,
                 "logprobs": None,
                 "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
-                "hidden_states": serializable_hidden_states
+                "hidden_states": serializable_hidden_states,
+                "confidence_score": score
             }
         ],
         "usage": {
@@ -423,8 +543,8 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
     all_hidden_states = [] if request.with_hidden_states else None
-
     stop_id_sequences = []
+
     if request.stop:
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
@@ -452,10 +572,18 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer.finalize()
     text = detokenizer.text
 
+    score = None
     if request.with_hidden_states and hidden_states is not None:
         # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
         avg_hs = hidden_states.mean(axis=1)
-        all_hidden_states.append(avg_hs)
+        if request.remote_score:
+            model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+            scorer = _confidence_scorers.get(model_key)
+            if scorer:
+                score = scorer.calculate_confidence(avg_hs.tolist())
+        else:
+            all_hidden_states.append(avg_hs)
+
     # Convert hidden states to regular Python lists before JSON serialization
     serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
 
@@ -469,7 +597,8 @@ def generate_chat_completion(prompt, request, model, tokenizer):
                 "message": {
                     "role": "assistant",
                     "content": text,
-                    "hidden_states": serializable_hidden_states
+                    "hidden_states": serializable_hidden_states,
+                    "confidence_score": score
                 },
                 "index": 0,
                 "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
@@ -484,10 +613,15 @@ def generate_chat_completion(prompt, request, model, tokenizer):
 
 
 def main():
-    import uvicorn
-    args = parse_args()
-    app, server_config = create_app(args)
-    uvicorn.run(app, host=server_config.host, port=server_config.port)
+    try:
+        import uvicorn
+        args = parse_args()
+        app, server_config, logger = create_app(args)
+        logger.info(f"Starting server on {server_config.host}:{server_config.port}")
+        uvicorn.run(app, host=server_config.host, port=server_config.port)
+    except Exception as e:
+        logger.error(f"Server startup failed: {str(e)}")
+        raise
 
 if __name__ == "__main__":
     main()
