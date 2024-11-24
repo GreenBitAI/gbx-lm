@@ -1,20 +1,3 @@
-# Copyright © 2023-2024 Apple Inc.
-# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
-
-# This refactored version uses FastAPI to improve concurrency performance of the original MLX "server.py".
-#
-# The main improvements and changes are:
-# - Use of FastAPI framework: Replaced the original BaseHTTPRequestHandler with FastAPI to handle HTTP requests.
-# - Asynchronous processing: Leveraged the asynchronous features of FastAPI, making all route handler functions asynchronous, which can significantly enhance concurrency performance.
-# - Request validation: Utilized Pydantic models (CompletionRequest and ChatCompletionRequest) to validate and parse input data.
-# - Streaming response: Used FastAPI's StreamingResponse to handle streaming outputs.
-# - Route separation: Divided text completion and chat completion into two separate routes, making the code structure clearer.
-# - Error handling: Employed FastAPI's exception handling mechanism to better manage and return errors.
-# - Dependency injection: Used FastAPI's dependency injection system to manage the ModelProvider.
-# - ASGI server: Adopted uvicorn as the ASGI server, which is faster and more reliable than Python's built-in HTTP server.
-# - Type hints: Fully utilized Python's type hints to enhance code readability and maintainability.
-# - Configuration management: Retained the original command-line argument configuration method, but it can be easily extended to use environment variables or configuration files.
-
 import os
 import logging
 from datetime import datetime
@@ -29,6 +12,7 @@ import mlx.core as mx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+import asyncio
 
 from .utils import generate_step, load
 
@@ -250,7 +234,8 @@ def create_app(args):
                         media_type="text/event-stream"
                     )
                 else:
-                    return JSONResponse(generate_completion(prompt, request, model, tokenizer))
+                    result = await generate_completion(prompt, request, model, tokenizer)
+                    return JSONResponse(result)
             except Exception as e:
                 logger.error(f"Completion request failed: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -278,7 +263,8 @@ def create_app(args):
                         media_type="text/event-stream"
                     )
                 else:
-                    return JSONResponse(generate_chat_completion(prompt, request, model, tokenizer))
+                    result = await generate_chat_completion(prompt, request, model, tokenizer)
+                    return JSONResponse(result)
             except Exception as e:
                 logger.error(f"Chat completion request failed: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -364,7 +350,7 @@ async def stream_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for (token, _, _), _ in zip(
+    for gen_result, _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,
@@ -376,6 +362,7 @@ async def stream_completion(prompt, request, model, tokenizer):
             ),
             range(request.max_tokens),
     ):
+        token = gen_result[0]  # Safely extract token from the tuple
         detokenizer.add_token(token)
         tokens.append(token)
 
@@ -419,7 +406,7 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for (token, _, _), _ in zip(
+    for gen_result, _ in zip(
             generate_step(
                 prompt=prompt,
                 model=model,
@@ -431,6 +418,7 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
             ),
             range(request.max_tokens),
     ):
+        token = gen_result[0]
         detokenizer.add_token(token)
         tokens.append(token)
 
@@ -460,7 +448,13 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     yield "data: [DONE]\n\n"
 
 
-def generate_completion(prompt, request, model, tokenizer):
+async def async_generate_step(*args, **kwargs):
+    """Wrap the synchronous generate_step as an async generator."""
+    for item in generate_step(*args, **kwargs):
+        yield item
+        await asyncio.sleep(0)
+
+async def generate_completion(prompt, request, model, tokenizer):
     created = int(time.time())
     request_id = f"cmpl-{uuid.uuid4()}"
 
@@ -474,8 +468,8 @@ def generate_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for (token, _, hidden_states), _ in zip(
-            generate_step(
+    try:
+        async for gen_output in async_generate_step(
                 prompt=prompt,
                 model=model,
                 temp=request.temperature,
@@ -484,58 +478,63 @@ def generate_completion(prompt, request, model, tokenizer):
                 repetition_context_size=request.repetition_context_size,
                 logit_bias=request.logit_bias,
                 with_hidden_states=request.with_hidden_states
-            ),
-            range(request.max_tokens),
-    ):
-        detokenizer.add_token(token)
-        tokens.append(token)
+        ):
+            (token, _, hidden_states) = gen_output
 
-        stop_condition = stopping_criteria(tokens, stop_id_sequences, tokenizer.eos_token_id)
-        if stop_condition.stop_met:
-            break
+            detokenizer.add_token(token)
+            tokens.append(token)
 
-    detokenizer.finalize()
-    text = detokenizer.text
+            stop_condition = stopping_criteria(tokens, stop_id_sequences, tokenizer.eos_token_id)
+            if stop_condition.stop_met:
+                break
 
-    score = None
-    if request.with_hidden_states and hidden_states is not None:
-        # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
-        avg_hs = hidden_states.mean(axis=1)
-        if request.remote_score:
-            model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
-            scorer = _confidence_scorers.get(model_key)
-            if scorer:
-                score = scorer.calculate_confidence(avg_hs.tolist())
-        else:
-            all_hidden_states.append(avg_hs)
+            await asyncio.sleep(0)
 
-    # Convert hidden states to regular Python lists before JSON serialization
-    serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
+        detokenizer.finalize()
+        text = detokenizer.text
 
-    return {
-        "id": request_id,
-        "object": "text_completion",
-        "created": created,
-        "model": request.model,
-        "choices": [
-            {
-                "text": text,
-                "index": 0,
-                "logprobs": None,
-                "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
-                "hidden_states": serializable_hidden_states,
-                "confidence_score": score
-            }
-        ],
-        "usage": {
-            "prompt_tokens": len(prompt),
-            "completion_tokens": len(tokens),
-            "total_tokens": len(prompt) + len(tokens),
-        },
-    }
+        score = None
+        if request.with_hidden_states and hidden_states is not None:
+            # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
+            avg_hs = hidden_states.mean(axis=1)
+            if request.remote_score:
+                model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+                scorer = _confidence_scorers.get(model_key)
+                if scorer:
+                    score = await asyncio.to_thread(scorer.calculate_confidence, avg_hs.tolist())
+            else:
+                all_hidden_states.append(avg_hs)
+
+        # Convert hidden states to regular Python lists before JSON serialization
+        serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
+
+        return {
+            "id": request_id,
+            "object": "text_completion",
+            "created": created,
+            "model": request.model,
+            "choices": [
+                {
+                    "text": text,
+                    "index": 0,
+                    "logprobs": None,
+                    "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
+                    "hidden_states": serializable_hidden_states,
+                    "confidence_score": score
+                }
+            ],
+            "usage": {
+                "prompt_tokens": len(prompt),
+                "completion_tokens": len(tokens),
+                "total_tokens": len(prompt) + len(tokens),
+            },
+        }
+    except Exception as e:
+        logger.error(f"Async completion generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-def generate_chat_completion(prompt, request, model, tokenizer):
+async def generate_chat_completion(prompt, request, model, tokenizer):
     created = int(time.time())
     request_id = f"chatcmpl-{uuid.uuid4()}"
 
@@ -543,14 +542,14 @@ def generate_chat_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
     all_hidden_states = [] if request.with_hidden_states else None
-    stop_id_sequences = []
 
+    stop_id_sequences = []
     if request.stop:
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for (token, _, hidden_states), _ in zip(
-            generate_step(
+    try:
+        async for gen_output in async_generate_step(
                 prompt=prompt,
                 model=model,
                 temp=request.temperature,
@@ -559,57 +558,62 @@ def generate_chat_completion(prompt, request, model, tokenizer):
                 repetition_context_size=request.repetition_context_size,
                 logit_bias=request.logit_bias,
                 with_hidden_states=request.with_hidden_states
-            ),
-            range(request.max_tokens),
-    ):
-        detokenizer.add_token(token)
-        tokens.append(token)
+        ):
+            (token, _, hidden_states) = gen_output
 
-        stop_condition = stopping_criteria(tokens, stop_id_sequences, tokenizer.eos_token_id)
-        if stop_condition.stop_met:
-            break
+            detokenizer.add_token(token)
+            tokens.append(token)
 
-    detokenizer.finalize()
-    text = detokenizer.text
+            stop_condition = stopping_criteria(tokens, stop_id_sequences, tokenizer.eos_token_id)
+            if stop_condition.stop_met:
+                break
 
-    score = None
-    if request.with_hidden_states and hidden_states is not None:
-        # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
-        avg_hs = hidden_states.mean(axis=1)
-        if request.remote_score:
-            model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
-            scorer = _confidence_scorers.get(model_key)
-            if scorer:
-                score = scorer.calculate_confidence(avg_hs.tolist())
-        else:
-            all_hidden_states.append(avg_hs)
+            await asyncio.sleep(0)
 
-    # Convert hidden states to regular Python lists before JSON serialization
-    serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
+        detokenizer.finalize()
+        text = detokenizer.text
 
-    return {
-        "id": request_id,
-        "object": "chat.completion",
-        "created": created,
-        "model": request.model,
-        "choices": [
-            {
-                "message": {
-                    "role": "assistant",
-                    "content": text,
-                    "hidden_states": serializable_hidden_states,
-                    "confidence_score": score
-                },
-                "index": 0,
-                "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
-            }
-        ],
-        "usage": {
-            "prompt_tokens": len(prompt),
-            "completion_tokens": len(tokens),
-            "total_tokens": len(prompt) + len(tokens),
-        },
-    }
+        score = None
+        if request.with_hidden_states and hidden_states is not None:
+            # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
+            avg_hs = hidden_states.mean(axis=1)
+            if request.remote_score:
+                model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+                scorer = _confidence_scorers.get(model_key)
+                if scorer:
+                    score = await asyncio.to_thread(scorer.calculate_confidence, avg_hs.tolist())
+            else:
+                all_hidden_states.append(avg_hs)
+
+        # Convert hidden states to regular Python lists before JSON serialization
+        serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
+
+        return {
+            "id": request_id,
+            "object": "chat.completion",
+            "created": created,
+            "model": request.model,
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": text,
+                        "hidden_states": serializable_hidden_states,
+                        "confidence_score": score
+                    },
+                    "index": 0,
+                    "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": len(prompt),
+                "completion_tokens": len(tokens),
+                "total_tokens": len(prompt) + len(tokens),
+            },
+        }
+    except Exception as e:
+        logger.error(f"Async chat completion generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def main():
