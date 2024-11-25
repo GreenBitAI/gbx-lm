@@ -448,10 +448,23 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     yield "data: [DONE]\n\n"
 
 
-async def async_generate_step(*args, **kwargs):
+async def async_generate_step(prompt, model, temp, top_p, repetition_penalty,
+                            repetition_context_size, logit_bias, with_hidden_states, max_tokens):
     """Wrap the synchronous generate_step as an async generator."""
-    for item in generate_step(*args, **kwargs):
-        yield item
+    for gen_output, _ in zip(
+        generate_step(
+            prompt=prompt,
+            model=model,
+            temp=temp,
+            top_p=top_p,
+            repetition_penalty=repetition_penalty,
+            repetition_context_size=repetition_context_size,
+            logit_bias=logit_bias,
+            with_hidden_states=with_hidden_states,
+        ),
+        range(max_tokens),
+    ):
+        yield gen_output
         await asyncio.sleep(0)
 
 async def generate_completion(prompt, request, model, tokenizer):
@@ -477,7 +490,8 @@ async def generate_completion(prompt, request, model, tokenizer):
                 repetition_penalty=request.repetition_penalty,
                 repetition_context_size=request.repetition_context_size,
                 logit_bias=request.logit_bias,
-                with_hidden_states=request.with_hidden_states
+                with_hidden_states=request.with_hidden_states,
+                max_tokens=request.max_tokens
         ):
             (token, _, hidden_states) = gen_output
 
@@ -557,7 +571,8 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
                 repetition_penalty=request.repetition_penalty,
                 repetition_context_size=request.repetition_context_size,
                 logit_bias=request.logit_bias,
-                with_hidden_states=request.with_hidden_states
+                with_hidden_states=request.with_hidden_states,
+                max_tokens=request.max_tokens
         ):
             (token, _, hidden_states) = gen_output
 
