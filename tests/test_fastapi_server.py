@@ -44,11 +44,12 @@ def create_test_app(mock_load):
         trust_remote_code=False,
         chat_template="",
         use_default_chat_template=False,
-        eos_token="<|eot_id|>"
+        eos_token="<|eot_id|>",
+        ue_parameter_path="test_params.db"
     )
 
     # Create app with test configuration
-    app, _ = create_app(args)
+    app, _, _ = create_app(args)
     return app
 
 
@@ -59,8 +60,14 @@ class TestFastAPIServer(unittest.TestCase):
         cls.client = TestClient(cls.app)
 
     @patch('gbx_lm.fastapi_server.generate_step')
-    def test_create_completion(self, mock_generate_step):
-        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+    @patch('gbx_lm.fastapi_server.async_generate_step')
+    def test_create_completion(self, mock_async_generate_step, mock_generate_step):
+        # Mock the async generator
+        async def mock_generator(*args, **kwargs):
+            yield ((mx.array([1]), mx.array([0.5]), None))
+
+        mock_async_generate_step.return_value = mock_generator()
+        mock_generate_step.return_value = [((mx.array([1]), mx.array([0.5]), None), 0)]  # 保留这个用于流式测试
 
         response = self.client.post(
             "/v1/default_model/completions",
@@ -80,8 +87,14 @@ class TestFastAPIServer(unittest.TestCase):
         self.assertEqual(data["object"], "text_completion")
 
     @patch('gbx_lm.fastapi_server.generate_step')
-    def test_create_chat_completion(self, mock_generate_step):
-        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+    @patch('gbx_lm.fastapi_server.async_generate_step')
+    def test_create_chat_completion(self, mock_async_generate_step, mock_generate_step):
+        # Mock the async generator
+        async def mock_generator(*args, **kwargs):
+            yield ((mx.array([1]), mx.array([0.5]), None))
+
+        mock_async_generate_step.return_value = mock_generator()
+        mock_generate_step.return_value = [((mx.array([1]), mx.array([0.5]), None), 0)]  # 保留这个用于流式测试
 
         response = self.client.post(
             "/v1/chat_model/chat/completions",
@@ -107,7 +120,7 @@ class TestFastAPIServer(unittest.TestCase):
 
     @patch('gbx_lm.fastapi_server.generate_step')
     def test_stream_completion(self, mock_generate_step):
-        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+        mock_generate_step.return_value = [((mx.array([1]), mx.array([0.5]), None), 0)]
 
         with self.client.stream(
                 "POST",
@@ -129,7 +142,7 @@ class TestFastAPIServer(unittest.TestCase):
             non_empty_events = [event for event in events if event]
             for event in non_empty_events[:-1]:
                 if event.startswith('data: '):
-                    data = json.loads(event[6:])  # Remove 'data: ' prefix
+                    data = json.loads(event[6:])
                     self.assertIn("id", data)
                     self.assertIn("choices", data)
                     self.assertEqual(data["object"], "text_completion")
@@ -138,7 +151,7 @@ class TestFastAPIServer(unittest.TestCase):
 
     @patch('gbx_lm.fastapi_server.generate_step')
     def test_stream_chat_completion(self, mock_generate_step):
-        mock_generate_step.return_value = [(mx.array([1]), mx.array([0.5]), None)]
+        mock_generate_step.return_value = [((mx.array([1]), mx.array([0.5]), None), 0)]
 
         with self.client.stream(
                 "POST",
