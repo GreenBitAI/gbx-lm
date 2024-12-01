@@ -344,6 +344,7 @@ async def stream_completion(prompt, request, model, tokenizer):
     detokenizer = tokenizer.detokenizer
     detokenizer.reset()
     tokens = []
+    is_first_chunk = True
 
     stop_id_sequences = []
     if request.stop:
@@ -362,7 +363,7 @@ async def stream_completion(prompt, request, model, tokenizer):
             ),
             range(request.max_tokens),
     ):
-        token = gen_result[0]  # Safely extract token from the tuple
+        token = gen_result[0]
         detokenizer.add_token(token)
         tokens.append(token)
 
@@ -388,8 +389,39 @@ async def stream_completion(prompt, request, model, tokenizer):
                 }
             ]
         }
+
+        # Add usage info in first chunk
+        if is_first_chunk:
+            response["usage"] = {
+                "input_tokens": len(prompt),
+                "output_tokens": len(tokens),
+                "total_tokens": len(prompt) + len(tokens)
+            }
+            is_first_chunk = False
+
         yield f"data: {json.dumps(response)}\n\n"
 
+    # Final chunk with complete usage stats
+    final_response = {
+        "id": request_id,
+        "object": "text_completion",
+        "created": created,
+        "model": request.model,
+        "choices": [
+            {
+                "text": "",
+                "index": 0,
+                "logprobs": None,
+                "finish_reason": "max_tokens" if len(tokens) == request.max_tokens else "stop",
+            }
+        ],
+        "usage": {
+            "input_tokens": len(prompt),
+            "output_tokens": len(tokens),
+            "total_tokens": len(prompt) + len(tokens)
+        }
+    }
+    yield f"data: {json.dumps(final_response)}\n\n"
     yield "data: [DONE]\n\n"
 
 
@@ -400,6 +432,7 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     detokenizer = tokenizer.detokenizer
     detokenizer.reset()
     tokens = []
+    is_first_chunk = True
 
     stop_id_sequences = []
     if request.stop:
@@ -443,8 +476,38 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
                 }
             ]
         }
+
+        # Add usage info in first chunk
+        if is_first_chunk:
+            response["usage"] = {
+                "input_tokens": len(prompt),
+                "output_tokens": len(tokens),
+                "total_tokens": len(prompt) + len(tokens)
+            }
+            is_first_chunk = False
+
         yield f"data: {json.dumps(response)}\n\n"
 
+    # Final chunk with complete usage stats
+    final_response = {
+        "id": request_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": request.model,
+        "choices": [
+            {
+                "delta": {"role": "assistant", "content": ""},
+                "index": 0,
+                "finish_reason": "max_tokens" if len(tokens) == request.max_tokens else "stop",
+            }
+        ],
+        "usage": {
+            "input_tokens": len(prompt),
+            "output_tokens": len(tokens),
+            "total_tokens": len(prompt) + len(tokens)
+        }
+    }
+    yield f"data: {json.dumps(final_response)}\n\n"
     yield "data: [DONE]\n\n"
 
 
@@ -532,14 +595,14 @@ async def generate_completion(prompt, request, model, tokenizer):
                     "text": text,
                     "index": 0,
                     "logprobs": None,
-                    "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
+                    "finish_reason": "max_tokens" if len(tokens) == request.max_tokens else "stop",
                     "hidden_states": serializable_hidden_states,
                     "confidence_score": score
                 }
             ],
             "usage": {
-                "prompt_tokens": len(prompt),
-                "completion_tokens": len(tokens),
+                "input_tokens": len(prompt),
+                "output_tokens": len(tokens),
                 "total_tokens": len(prompt) + len(tokens),
             },
         }
@@ -617,12 +680,12 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
                         "confidence_score": score
                     },
                     "index": 0,
-                    "finish_reason": "length" if len(tokens) == request.max_tokens else "stop",
+                    "finish_reason": "max_tokens" if len(tokens) == request.max_tokens else "stop",
                 }
             ],
             "usage": {
-                "prompt_tokens": len(prompt),
-                "completion_tokens": len(tokens),
+                "input_tokens": len(prompt),
+                "output_tokens": len(tokens),
                 "total_tokens": len(prompt) + len(tokens),
             },
         }
