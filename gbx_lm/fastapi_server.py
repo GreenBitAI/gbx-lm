@@ -351,17 +351,16 @@ async def stream_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for gen_result, _ in zip(
-            generate_step(
-                prompt=prompt,
-                model=model,
-                temp=request.temperature,
-                top_p=request.top_p,
-                repetition_penalty=request.repetition_penalty,
-                repetition_context_size=request.repetition_context_size,
-                logit_bias=request.logit_bias,
-            ),
-            range(request.max_tokens),
+    async for gen_result in async_generate_step(
+            prompt=prompt,
+            model=model,
+            temp=request.temperature,
+            top_p=request.top_p,
+            repetition_penalty=request.repetition_penalty,
+            repetition_context_size=request.repetition_context_size,
+            logit_bias=request.logit_bias,
+            with_hidden_states=request.with_hidden_states,
+            max_tokens=request.max_tokens
     ):
         token = gen_result[0]
         detokenizer.add_token(token)
@@ -439,17 +438,16 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    for gen_result, _ in zip(
-            generate_step(
-                prompt=prompt,
-                model=model,
-                temp=request.temperature,
-                top_p=request.top_p,
-                repetition_penalty=request.repetition_penalty,
-                repetition_context_size=request.repetition_context_size,
-                logit_bias=request.logit_bias,
-            ),
-            range(request.max_tokens),
+    async for gen_result in async_generate_step(
+            prompt=prompt,
+            model=model,
+            temp=request.temperature,
+            top_p=request.top_p,
+            repetition_penalty=request.repetition_penalty,
+            repetition_context_size=request.repetition_context_size,
+            logit_bias=request.logit_bias,
+            with_hidden_states=request.with_hidden_states,
+            max_tokens=request.max_tokens
     ):
         token = gen_result[0]
         detokenizer.add_token(token)
