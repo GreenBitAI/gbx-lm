@@ -34,8 +34,9 @@ logger = None
 
 # Global UE confidence scorers
 UE_MODELS = {
-    "qwen": "qwen2.5",
-    "llama": "llama-3"
+    "qwen-2.5-7b": "qwen2.5",
+    "llama-3-8b": "llama-3",
+    "llama-3.2-3b": "llama3.2-3b"
 }
 _confidence_scorers = {}
 
@@ -65,6 +66,34 @@ def setup_logging():
     logger.info(f"Starting GBX-Model API server. Log file: {log_file}")
     return logger
 
+def get_model_key(request_model: str) -> str:
+    """
+    Determine the corresponding model key based on the requested model name
+
+    Args:
+        request_model: The model name in the request
+    Returns:
+        str: The matched model key
+    """
+    request_model = request_model.lower()
+
+    # First try exact match
+    if request_model in UE_MODELS:
+        return request_model
+
+    # If no exact match, try standardizing the model name format
+    model_families = {
+        "qwen-2.5-7b": ["qwen2.5-7b", "qwen-2.5-7b"],
+        "llama-3-8b": ["llama3-8b", "llama-3-8b"],
+        "llama-3.2-3b": ["llama3.2-3b", "llama-3.2-3b"]
+    }
+
+    for standard_name, variants in model_families.items():
+        if any(variant in request_model for variant in variants):
+            return standard_name
+
+    # If no match is found, raise exception
+    raise ValueError(f"Error: Unsupported model: {request_model}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MLX FastAPI Server.")
@@ -573,7 +602,7 @@ async def generate_completion(prompt, request, model, tokenizer):
             # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
             avg_hs = hidden_states.mean(axis=1)
             if request.remote_score:
-                model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+                model_key = get_model_key(request.model)
                 scorer = _confidence_scorers.get(model_key)
                 if scorer:
                     score = await asyncio.to_thread(scorer.calculate_confidence, avg_hs.tolist())
@@ -654,7 +683,7 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
             # averaging the hidden states of the prompt tokens for reducing the data transfer overhead.
             avg_hs = hidden_states.mean(axis=1)
             if request.remote_score:
-                model_key = "qwen" if request.model.lower().__contains__("qwen") else "llama"
+                model_key = get_model_key(request.model)
                 scorer = _confidence_scorers.get(model_key)
                 if scorer:
                     score = await asyncio.to_thread(scorer.calculate_confidence, avg_hs.tolist())
