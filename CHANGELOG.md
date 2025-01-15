@@ -5,6 +5,14 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [0.3.6] - 2025/1/15
+
+### Updated
+
+- created async_generate_step in fast-api
+- added token usage information in fast-api
+- extended libra router types
+
 ## [0.3.5] - 2024/11/25
 
 ### Updated
