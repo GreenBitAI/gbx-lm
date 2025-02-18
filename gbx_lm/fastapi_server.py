@@ -36,8 +36,7 @@ logger = None
 # Global UE confidence scorers
 UE_MODELS = {
     "qwen-2.5-7b": "qwen2.5",
-    "llama-3-8b": "llama-3",
-    "llama-3.2-3b": "llama3.2-3b"
+    "llama-3-8b": "llama-3"
 }
 _confidence_scorers = {}
 
