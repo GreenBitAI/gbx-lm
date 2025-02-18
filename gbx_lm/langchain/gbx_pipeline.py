@@ -103,7 +103,8 @@ class GBXPipeline(LLM):
             lazy=lazy
         )
 
-        tokenizer.chat_template = tokenizer.default_chat_template
+        if not tokenizer.chat_template and hasattr(tokenizer, "default_chat_template"):
+            tokenizer.chat_template = tokenizer.default_chat_template
 
         _pipeline_kwargs = pipeline_kwargs or {}
 
@@ -114,8 +115,8 @@ class GBXPipeline(LLM):
             tokenizer_config=tokenizer_config,
             adapter_file=adapter_file,
             lazy=lazy,
-            pipeline_kwargs=_pipeline_kwargs
-            **kwargs,
+            pipeline_kwargs=_pipeline_kwargs,
+            **kwargs
         )
 
     @property

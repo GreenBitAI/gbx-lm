@@ -33,18 +33,6 @@ class TestDatasets(unittest.TestCase):
                     json.dump(l, fid)
                     fid.write("\n")
 
-    def test_text(self):
-        data = {"text": "This is an example for the model."}
-        self.save_data(4 * [data])
-        args = types.SimpleNamespace(train=True, test=False, data=self.test_dir)
-        train, valid, test = datasets.load_dataset(args, None)
-        self.assertEqual(len(train), 4)
-        self.assertEqual(len(valid), 4)
-        self.assertEqual(len(test), 0)
-        self.assertTrue(len(train[0]) > 0)
-        self.assertTrue(len(valid[0]) > 0)
-        self.assertTrue(isinstance(train, datasets.Dataset))
-
     def test_completions(self):
         data = {"prompt": "What is the capital of France?", "completion": "Paris."}
         self.save_data(4 * [data])

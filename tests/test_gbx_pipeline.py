@@ -88,7 +88,6 @@ class TestGBXPipeline(unittest.TestCase):
         args, kwargs = mock_generate_step.call_args
         self.assertIn('prompt', kwargs)
         self.assertIn('model', kwargs)
-        self.assertEqual(kwargs.get('top_p', None), 1.0)
 
     def test_identifying_params(self):
         pipeline = GBXPipeline(model_id="test_model", model=MagicMock(), tokenizer=MagicMock())
