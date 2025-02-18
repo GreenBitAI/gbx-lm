@@ -3,6 +3,7 @@
 
 import argparse
 import math
+import os
 import re
 import types
 from pathlib import Path
@@ -16,9 +17,9 @@ from .tokenizer_utils import TokenizerWrapper
 from .tuner.datasets import load_dataset
 from .tuner.trainer import TrainingArgs, TrainingCallback, evaluate, train
 from .tuner.utils import (
-    apply_lora_layers,
     build_schedule,
     linear_to_lora_layers,
+    load_adapters,
     print_trainable_parameters,
 )
 from .utils import load, save_config
@@ -42,9 +43,10 @@ yaml_loader.add_implicit_resolver(
 CONFIG_DEFAULTS = {
     "model": "mlx_model",
     "train": False,
+    "fine_tune_type": "lora",
     "data": "data/",
     "seed": 0,
-    "lora_layers": 16,
+    "num_layers": 16,
     "batch_size": 4,
     "iters": 1000,
     "val_batches": 25,
@@ -57,9 +59,10 @@ CONFIG_DEFAULTS = {
     "test": False,
     "test_batches": 500,
     "max_seq_length": 2048,
+    "config": None,
+    "grad_checkpoint": False,
     "lr_schedule": None,
     "lora_parameters": {"rank": 8, "alpha": 16, "dropout": 0.0, "scale": 10.0},
-    "use_dora": False,
 }
 
 
@@ -67,6 +70,7 @@ def build_parser():
     parser = argparse.ArgumentParser(description="LoRA or QLoRA finetuning.")
     parser.add_argument(
         "--model",
+        type=str,
         help="The path to the local model directory or Hugging Face repo.",
     )
 
@@ -80,10 +84,27 @@ def build_parser():
     parser.add_argument(
         "--data",
         type=str,
-        help="Directory with {train, valid, test}.jsonl files",
+        help=(
+            "Directory with {train, valid, test}.jsonl files or the name "
+            "of a Hugging Face dataset (e.g., 'mlx-community/wikisql')"
+        ),
     )
     parser.add_argument(
-        "--lora-layers",
+        "--fine-tune-type",
+        type=str,
+        choices=["lora", "dora", "full"],
+        help="Type of fine-tuning to perform: lora, dora, or full.",
+    )
+
+    parser.add_argument(
+        "--mask-prompt",
+        action="store_true",
+        help="Mask the prompt in the loss when training",
+        default=False,
+    )
+
+    parser.add_argument(
+        "--num-layers",
         type=int,
         help="Number of layers to fine-tune. Default is 16, use -1 for all.",
     )
@@ -108,12 +129,12 @@ def build_parser():
     parser.add_argument(
         "--resume-adapter-file",
         type=str,
-        help="Load path to resume training with the given adapters.",
+        help="Load path to resume training from the given fine-tuned weights.",
     )
     parser.add_argument(
         "--adapter-path",
         type=str,
-        help="Save/load path for the adapters.",
+        help="Save/load path for the fine-tuned weights.",
     )
     parser.add_argument(
         "--save-every",
@@ -139,7 +160,7 @@ def build_parser():
     parser.add_argument(
         "-c",
         "--config",
-        default=None,
+        type=str,
         help="A YAML configuration file with the training options",
     )
     parser.add_argument(
@@ -148,10 +169,7 @@ def build_parser():
         help="Use gradient checkpointing to reduce memory use.",
         default=None,
     )
-    parser.add_argument("--seed", type=int, default=None, help="The PRNG seed")
-    parser.add_argument(
-        "--use-dora", action="store_true", default=None, help="Use DoRA to finetune."
-    )
+    parser.add_argument("--seed", type=int, help="The PRNG seed")
     return parser
 
 
@@ -163,21 +181,31 @@ def train_model(
     valid_set,
     training_callback: TrainingCallback = None,
 ):
-    # Freeze all layers
     model.freeze()
+    if args.fine_tune_type == "full":
+        for l in model.layers[-min(args.num_layers, 0) :]:
+            l.unfreeze()
+    elif args.fine_tune_type in ["lora", "dora"]:
+        # Convert linear layers to lora/dora layers and unfreeze in the process
+        linear_to_lora_layers(
+            model,
+            args.num_layers,
+            args.lora_parameters,
+            use_dora=(args.fine_tune_type == "dora"),
+        )
+    else:
+        raise ValueError(f"Received unknown fine-tune-type {args.fine_tune_type}")
 
-    # Convert linear layers to lora layers and unfreeze in the process
-    linear_to_lora_layers(model, args.lora_layers, args.lora_parameters, args.use_dora)
-
-    # Resume training the given adapters.
+    # Resume from weights if provided
     if args.resume_adapter_file is not None:
-        print(f"Loading pretrained adapters from {args.resume_adapter_file}")
+        print(f"Loading fine-tuned weights from {args.resume_adapter_file}")
         model.load_weights(args.resume_adapter_file, strict=False)
 
     print_trainable_parameters(model)
 
     adapter_path = Path(args.adapter_path)
     adapter_path.mkdir(parents=True, exist_ok=True)
+
     adapter_file = adapter_path / "adapters.safetensors"
     save_config(vars(args), adapter_path / "adapter_config.json")
 
@@ -200,6 +228,7 @@ def train_model(
             build_schedule(args.lr_schedule) if args.lr_schedule else args.learning_rate
         )
     )
+
     # Train model
     train(
         model=model,
@@ -241,7 +270,7 @@ def run(args, training_callback: TrainingCallback = None):
     if args.test and not args.train:
         # Allow testing without LoRA layers by providing empty path
         if args.adapter_path != "":
-            apply_lora_layers(model, args.adapter_path)
+            load_adapters(model, args.adapter_path)
 
     elif args.train:
         print("Training")
@@ -255,6 +284,7 @@ def run(args, training_callback: TrainingCallback = None):
 
 
 def main():
+    os.environ["TOKENIZERS_PARALLELISM"] = "true"
     parser = build_parser()
     args = parser.parse_args()
     config = args.config

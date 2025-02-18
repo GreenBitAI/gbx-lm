@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [0.3.7] - 2025/2/18
+
+### Updated
+
+- synchronized with mlx==0.23.0 and mlx-lm==0.21.4
+
 ## [0.3.6] - 2025/1/15
 
 ### Updated

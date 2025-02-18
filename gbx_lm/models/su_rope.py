@@ -1,4 +1,5 @@
 # Copyright © 2023-2024 Apple Inc.
+# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
 
 import math
 from typing import List, Union

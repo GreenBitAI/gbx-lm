@@ -83,7 +83,6 @@ class LoRALinear(nn.Module):
         lora_b = (self.scale * self.lora_b.T).astype(dtype)
         lora_a = self.lora_a.T.astype(dtype)
         fused_linear.weight = weight + lora_b @ lora_a
-
         if bias:
             fused_linear.bias = linear.bias
 
@@ -96,7 +95,6 @@ class LoRALinear(nn.Module):
             fused_linear = QuantizedClass.from_linear(*args)
 
         return fused_linear
-
 
     def __init__(
         self,

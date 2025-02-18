@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-from typing import Any, Callable, Iterator, List, Mapping, Optional, Tuple
+from typing import Any, Iterator, List, Mapping, Optional, Tuple
 
 from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.language_models.llms import LLM
@@ -9,7 +8,7 @@ from langchain_core.outputs import GenerationChunk
 
 import mlx.core as mx
 from gbx_lm import load, generate
-from gbx_lm.generate import load_kv_cache_from_file
+from gbx_lm.sample_utils import make_sampler
 
 DEFAULT_MODEL_ID = "GreenBitAI/Llama-3-8B-layer-mix-bpw-4.0-mlx"
 
@@ -91,35 +90,20 @@ class GBXPipeline(LLM):
         adapter_file: Optional[str] = None,
         lazy: bool = False,
         pipeline_kwargs: Optional[dict] = None,
-        kv_cache_file: Optional[str] = None, # A file containing saved KV caches to avoid recomputing them
         **kwargs: Any,
     ) -> GBXPipeline:
         """Construct the pipeline object from model_id and task."""
+        tokenizer_config = tokenizer_config or {}
+        tokenizer_config["trust_remote_code"] = True
 
-        # Load the kv cache and metadata if a kv cache file is provided
-        cache_history = None
-        metadata = None
-        if kv_cache_file is not None:
-            cache_history, metadata = load_kv_cache_from_file(kv_cache_file)
-        max_kv_size = None
-        if cache_history is not None:
-            max_kv_size = metadata["max_kv_size"]
-            max_kv_size = int(max_kv_size) if max_kv_size.isdigit() else None
+        model, tokenizer = load(
+            model_id,
+            adapter_path=adapter_file,
+            tokenizer_config=tokenizer_config,
+            lazy=lazy
+        )
 
-        if tokenizer_config is not None:
-            tokenizer_config = tokenizer_config
-        else:
-            tokenizer_config = (
-                {} if cache_history is None else json.loads(metadata["tokenizer_config"])
-            )
-
-        if adapter_file:
-            model, tokenizer = load(model_id, tokenizer_config, adapter_file, lazy)
-        else:
-            model, tokenizer = load(model_id, tokenizer_config, lazy=lazy)
-
-        if metadata is not None:
-            tokenizer.chat_template = metadata["chat_template"]
+        tokenizer.chat_template = tokenizer.default_chat_template
 
         _pipeline_kwargs = pipeline_kwargs or {}
 
@@ -130,9 +114,7 @@ class GBXPipeline(LLM):
             tokenizer_config=tokenizer_config,
             adapter_file=adapter_file,
             lazy=lazy,
-            pipeline_kwargs=_pipeline_kwargs,
-            max_kv_size=max_kv_size,
-            cache_history=cache_history,
+            pipeline_kwargs=_pipeline_kwargs
             **kwargs,
         )
 
@@ -144,9 +126,7 @@ class GBXPipeline(LLM):
             "tokenizer_config": self.tokenizer_config,
             "adapter_file": self.adapter_file,
             "lazy": self.lazy,
-            "pipeline_kwargs": self.pipeline_kwargs,
-            "max_kv_size": self.max_kv_size,
-            "cache_history": self.cache_history
+            "pipeline_kwargs": self.pipeline_kwargs
         }
 
     @property
@@ -166,37 +146,22 @@ class GBXPipeline(LLM):
         temp: float = pipeline_kwargs.get("temp", 0.7)
         max_tokens: int = pipeline_kwargs.get("max_tokens", 100)
         verbose: bool = pipeline_kwargs.get("verbose", False)
-        formatter: Optional[Callable] = pipeline_kwargs.get("formatter", None)
-        repetition_penalty: Optional[float] = pipeline_kwargs.get(
-            "repetition_penalty", None
-        )
-        repetition_context_size: Optional[int] = pipeline_kwargs.get(
-            "repetition_context_size", None
-        )
         top_p: float = pipeline_kwargs.get("top_p", 1.0)
-        # Treat the prompt as a suffix assuming that the prefix is in the
-        # stored kv cache.
-        if self.cache_history is not None:
-            test_prompt = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": "<query>"}],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            prompt = prompt[test_prompt.index("<query>") :]
+
+        sampler = make_sampler(temp, top_p)
+
+        messages = [{"role": "user", "content": prompt}]
+        prompt = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True
+        )
 
         return generate(
-            model=self.model,
-            tokenizer=self.tokenizer,
-            prompt=prompt,
-            temp=temp,
+            self.model,
+            self.tokenizer,
+            prompt,
             max_tokens=max_tokens,
             verbose=verbose,
-            formatter=formatter,
-            repetition_penalty=repetition_penalty,
-            repetition_context_size=repetition_context_size,
-            top_p=top_p,
-            max_kv_size=self.max_kv_size,
-            cache_history=self.cache_history
+            sampler=sampler
         )
 
     def _stream(
@@ -219,24 +184,13 @@ class GBXPipeline(LLM):
 
         temp: float = pipeline_kwargs.get("temp", 0.7)
         max_new_tokens: int = pipeline_kwargs.get("max_tokens", 100)
-        repetition_penalty: Optional[float] = pipeline_kwargs.get(
-            "repetition_penalty", None
-        )
-        repetition_context_size: Optional[int] = pipeline_kwargs.get(
-            "repetition_context_size", None
-        )
         top_p: float = pipeline_kwargs.get("top_p", 1.0)
-        # Treat the prompt as a suffix assuming that the prefix is in the
-        # stored kv cache.
-        if self.cache_history is not None:
-            test_prompt = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": "<query>"}],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            prompt = prompt[test_prompt.index("<query>") :]
+        sampler = make_sampler(temp, top_p)
 
-        prompt = self.tokenizer.encode(prompt, return_tensors="np")
+        messages = [{"role": "user", "content": prompt}]
+        prompt = self.tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True
+        )
 
         prompt_tokens = mx.array(prompt[0])
 
@@ -248,12 +202,8 @@ class GBXPipeline(LLM):
             generate_step(
                 prompt=prompt_tokens,
                 model=self.model,
-                temp=temp,
-                repetition_penalty=repetition_penalty,
-                repetition_context_size=repetition_context_size,
-                top_p=top_p,
-                max_kv_size=self.max_kv_size,
-                cache_history=self.cache_history
+                max_tokens=max_new_tokens,
+                sampler=sampler
             ),
             range(max_new_tokens),
         ):

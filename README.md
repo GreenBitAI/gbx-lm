@@ -27,7 +27,12 @@ To generate natural language content using a converted model:
 python -m gbx_lm.generate --model <path to a converted model or a Hugging Face repo name>
 
 # Example
-python -m gbx_lm.generate --model GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx  --max-tokens 100 --prompt "calculate 4*8+1024=" --eos-token '<|im_end|>'
+python -m gbx_lm.generate --model GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx  --max-tokens 100 --prompt "calculate 4*8+1024="
+```
+
+### Interactive Chat
+```bash
+python -m gbx_lm.chat --model GreenBitAI/Llama-3.2-3B-Instruct-layer-mix-bpw-4.0-mlx  --max-tokens 100
 ```
 
 ### Managing Local Model

@@ -1,4 +1,3 @@
-import torch
 from typing import Union, Tuple
 from .libra_router.ue_router import MahalanobisDistanceSeq
 

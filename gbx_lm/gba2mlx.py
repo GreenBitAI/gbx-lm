@@ -1,3 +1,5 @@
+# Initial code base from https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm under the MIT License.
+# Additional code from GreenBitAI is licensed under the Apache 2.0 License.
 import argparse
 import copy
 from shutil import copy as file_copy

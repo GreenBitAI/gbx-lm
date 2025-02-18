@@ -1,4 +1,4 @@
-mlx>=0.14
+mlx>=0.22.0
 numpy
 protobuf
 torch>=2.0.0

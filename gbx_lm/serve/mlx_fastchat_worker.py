@@ -34,6 +34,7 @@ from gbx_lm.server_utils import (
     stopping_criteria,
     sequence_overlap
 )
+from gbx_lm.sample_utils import make_sampler
 
 app = FastAPI()
 
@@ -98,7 +99,6 @@ class MLXWorker(BaseModelWorker):
         request_id = params.pop("request_id")
         temperature = float(params.get("temperature", self.temperature))
         top_p = float(params.get("top_p", 1.0))
-        frequency_penalty = float(params.get("frequency_penalty", 0.0))
         max_new_tokens = params.get("max_new_tokens", self.max_tokens)
         stop_str = params.get("stop", None)
         stop_token_ids = params.get("stop_token_ids", None) or []
@@ -126,9 +126,10 @@ class MLXWorker(BaseModelWorker):
         detokenizer = self.tokenizer.detokenizer
         detokenizer.reset()
 
+        sampler = make_sampler(temperature, top_p)
+
         iterator = await run_in_threadpool(
-            generate_step, context_mlx, self.mlx_model, temperature,
-            frequency_penalty, 20, top_p
+            generate_step, context_mlx, self.mlx_model, max_tokens=max_new_tokens, sampler=sampler
         )
 
         stop_id_sequences = [self.tokenizer.encode(st) for st in stop]

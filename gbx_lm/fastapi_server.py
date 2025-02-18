@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 import asyncio
 
 from .utils import generate_step, load
+from .sample_utils import make_sampler
 
 PROJECT_ROOT = Path(__file__).parent.parent
 LOG_DIR = PROJECT_ROOT / "logs"
@@ -99,7 +100,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="MLX FastAPI Server.")
     # Server configuration
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address to bind the server")
-    parser.add_argument("--port", type=int, default=8000, help="Port number to run the server")
+    parser.add_argument("--port", type=int, default=11688, help="Port number to run the server")
     # Model configuration
     parser.add_argument("--model", type=str, help="The path to the MLX model weights, tokenizer, and config")
     parser.add_argument("--model_list", type=str, nargs="+", help="List of model paths to serve")
@@ -385,9 +386,6 @@ async def stream_completion(prompt, request, model, tokenizer):
             model=model,
             temp=request.temperature,
             top_p=request.top_p,
-            repetition_penalty=request.repetition_penalty,
-            repetition_context_size=request.repetition_context_size,
-            logit_bias=request.logit_bias,
             with_hidden_states=request.with_hidden_states,
             max_tokens=request.max_tokens
     ):
@@ -472,9 +470,6 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
             model=model,
             temp=request.temperature,
             top_p=request.top_p,
-            repetition_penalty=request.repetition_penalty,
-            repetition_context_size=request.repetition_context_size,
-            logit_bias=request.logit_bias,
             with_hidden_states=request.with_hidden_states,
             max_tokens=request.max_tokens
     ):
@@ -538,18 +533,15 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     yield "data: [DONE]\n\n"
 
 
-async def async_generate_step(prompt, model, temp, top_p, repetition_penalty,
-                            repetition_context_size, logit_bias, with_hidden_states, max_tokens):
+async def async_generate_step(prompt, model, temp, top_p, with_hidden_states, max_tokens):
     """Wrap the synchronous generate_step as an async generator."""
+    sampler = make_sampler(temp, top_p)
     for gen_output, _ in zip(
         generate_step(
             prompt=prompt,
             model=model,
-            temp=temp,
-            top_p=top_p,
-            repetition_penalty=repetition_penalty,
-            repetition_context_size=repetition_context_size,
-            logit_bias=logit_bias,
+            max_tokens=max_tokens,
+            sampler=sampler,
             with_hidden_states=with_hidden_states,
         ),
         range(max_tokens),
@@ -577,9 +569,6 @@ async def generate_completion(prompt, request, model, tokenizer):
                 model=model,
                 temp=request.temperature,
                 top_p=request.top_p,
-                repetition_penalty=request.repetition_penalty,
-                repetition_context_size=request.repetition_context_size,
-                logit_bias=request.logit_bias,
                 with_hidden_states=request.with_hidden_states,
                 max_tokens=request.max_tokens
         ):
@@ -658,9 +647,6 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
                 model=model,
                 temp=request.temperature,
                 top_p=request.top_p,
-                repetition_penalty=request.repetition_penalty,
-                repetition_context_size=request.repetition_context_size,
-                logit_bias=request.logit_bias,
                 with_hidden_states=request.with_hidden_states,
                 max_tokens=request.max_tokens
         ):
