@@ -24,7 +24,6 @@ LOG_DIR = PROJECT_ROOT / "logs"
 from .server_utils import (
     stopping_criteria,
     sequence_overlap,
-    convert_chat,
     get_model_endpoint_path
 )
 
@@ -273,16 +272,18 @@ def create_app(args):
             try:
                 model, tokenizer = model_provider.load(model_path)
 
-                # if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
                 prompt = tokenizer.apply_chat_template(
                     request.messages,
                     add_generation_prompt=True,
                 )
-                # else:
-                #     prompt = convert_chat(request.messages)
-                #     prompt = tokenizer.encode(prompt)
 
-                prompt = mx.array(prompt)
+                if not isinstance(prompt, mx.array):
+                    if isinstance(prompt, str):
+                        add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
+                            tokenizer.bos_token
+                        )
+                        prompt = tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
+                    prompt = mx.array(prompt)
 
                 if request.stream:
                     return StreamingResponse(
@@ -378,15 +379,16 @@ async def stream_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    async for gen_result in async_generate_step(
+    async for (token, _, hidden_states) in async_generate_step(
             prompt=prompt,
             model=model,
+            tokenizer=tokenizer,
             temp=request.temperature,
             top_p=request.top_p,
             with_hidden_states=request.with_hidden_states,
             max_tokens=request.max_tokens
     ):
-        token = gen_result[0]
+        token = token
         detokenizer.add_token(token)
         tokens.append(token)
 
@@ -462,15 +464,15 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    async for gen_result in async_generate_step(
+    async for (token, _, hidden_states) in async_generate_step(
             prompt=prompt,
             model=model,
+            tokenizer=tokenizer,
             temp=request.temperature,
             top_p=request.top_p,
             with_hidden_states=request.with_hidden_states,
             max_tokens=request.max_tokens
     ):
-        token = gen_result[0]
         detokenizer.add_token(token)
         tokens.append(token)
 
@@ -530,20 +532,21 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     yield "data: [DONE]\n\n"
 
 
-async def async_generate_step(prompt, model, temp, top_p, with_hidden_states, max_tokens):
+async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens):
     """Wrap the synchronous generate_step as an async generator."""
     sampler = make_sampler(temp, top_p)
-    for gen_output, _ in zip(
-        generate_step(
-            prompt=prompt,
-            model=model,
-            max_tokens=max_tokens,
-            sampler=sampler,
-            with_hidden_states=with_hidden_states,
-        ),
-        range(max_tokens),
+
+    for token, logprobs, hidden_states in generate_step(
+        prompt=prompt,
+        model=model,
+        max_tokens=max_tokens,
+        sampler=sampler,
+        with_hidden_states=with_hidden_states,
     ):
-        yield gen_output
+        if token in tokenizer.eos_token_ids:
+            break
+
+        yield (token, logprobs, hidden_states)
         await asyncio.sleep(0)
 
 async def generate_completion(prompt, request, model, tokenizer):
@@ -561,16 +564,15 @@ async def generate_completion(prompt, request, model, tokenizer):
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     try:
-        async for gen_output in async_generate_step(
+        async for (token, _, hidden_states) in async_generate_step(
                 prompt=prompt,
                 model=model,
+                tokenizer=tokenizer,
                 temp=request.temperature,
                 top_p=request.top_p,
                 with_hidden_states=request.with_hidden_states,
                 max_tokens=request.max_tokens
         ):
-            (token, _, hidden_states) = gen_output
-
             detokenizer.add_token(token)
             tokens.append(token)
 
@@ -639,16 +641,15 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     try:
-        async for gen_output in async_generate_step(
+        async for (token, _, hidden_states) in async_generate_step(
                 prompt=prompt,
                 model=model,
+                tokenizer=tokenizer,
                 temp=request.temperature,
                 top_p=request.top_p,
                 with_hidden_states=request.with_hidden_states,
                 max_tokens=request.max_tokens
         ):
-            (token, _, hidden_states) = gen_output
-
             detokenizer.add_token(token)
             tokens.append(token)
 

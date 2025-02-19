@@ -137,13 +137,15 @@ class MLXWorker(BaseModelWorker):
         for i in range(max_new_tokens):
             (token, prob, _) = await run_in_threadpool(next, iterator)
 
-            detokenizer.add_token(token)
-
-            tokens.append(token)
+            if token in self.tokenizer.eos_token_ids:
+                break
             stop_condition = stopping_criteria(tokens, stop_id_sequences, self.tokenizer.eos_token_id)
             if stop_condition.stop_met:
                 finish_reason = "stop"
                 break
+
+            detokenizer.add_token(token)
+            tokens.append(token)
 
             if any(sequence_overlap(tokens, sequence) for sequence in stop_id_sequences):
                 continue

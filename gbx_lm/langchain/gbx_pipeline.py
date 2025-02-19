@@ -199,17 +199,19 @@ class GBXPipeline(LLM):
         detokenizer = self.tokenizer.detokenizer
         detokenizer.reset()
 
-        for (token, prob, _), n in zip(
-            generate_step(
-                prompt=prompt_tokens,
-                model=self.model,
-                max_tokens=max_new_tokens,
-                sampler=sampler
-            ),
-            range(max_new_tokens),
+        for (token, prob, _), n in generate_step(
+            prompt=prompt_tokens,
+            model=self.model,
+            max_tokens=max_new_tokens,
+            sampler=sampler
         ):
             # identify text to yield
             text: Optional[str] = None
+
+            # break if stop sequence found
+            if token in self.tokenizer.eos_token_ids or token == eos_token_id or (stop is not None and text in stop):
+                break
+
             detokenizer.add_token(token)
             detokenizer.finalize()
             text = detokenizer.last_segment
@@ -220,7 +222,3 @@ class GBXPipeline(LLM):
                 yield chunk
                 if run_manager:
                     run_manager.on_llm_new_token(chunk.text)
-
-            # break if stop sequence found
-            if token == eos_token_id or (stop is not None and text in stop):
-                break
