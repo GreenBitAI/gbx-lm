@@ -84,8 +84,7 @@ def get_model_key(request_model: str) -> str:
     # If no exact match, try standardizing the model name format
     model_families = {
         "qwen-2.5-7b": ["qwen2.5-7b", "qwen-2.5-7b"],
-        "llama-3-8b": ["llama3-8b", "llama-3-8b"],
-        "llama-3.2-3b": ["llama3.2-3b", "llama-3.2-3b"]
+        "llama-3-8b": ["llama3-8b", "llama-3-8b"]
     }
 
     for standard_name, variants in model_families.items():
@@ -274,15 +273,14 @@ def create_app(args):
             try:
                 model, tokenizer = model_provider.load(model_path)
 
-                if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
-                    prompt = tokenizer.apply_chat_template(
-                        request.messages,
-                        tokenize=True,
-                        add_generation_prompt=True,
-                    )
-                else:
-                    prompt = convert_chat(request.messages)
-                    prompt = tokenizer.encode(prompt)
+                # if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+                prompt = tokenizer.apply_chat_template(
+                    request.messages,
+                    add_generation_prompt=True,
+                )
+                # else:
+                #     prompt = convert_chat(request.messages)
+                #     prompt = tokenizer.encode(prompt)
 
                 prompt = mx.array(prompt)
 
