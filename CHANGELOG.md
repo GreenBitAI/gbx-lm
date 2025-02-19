@@ -5,6 +5,12 @@ The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
 
+## [0.3.8] - 2025/2/19
+
+### Updated
+
+- fixed some issues in fastapi-server and langchain pipeline.
+
 ## [0.3.7] - 2025/2/18
 
 ### Updated
