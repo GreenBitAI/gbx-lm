@@ -16,7 +16,6 @@ import asyncio
 
 from .utils import generate_step, load
 from .sample_utils import make_sampler
-from .models.cache import make_prompt_cache
 
 PROJECT_ROOT = Path(__file__).parent.parent
 LOG_DIR = PROJECT_ROOT / "logs"
@@ -108,7 +107,6 @@ def parse_args():
     parser.add_argument("--use_default_chat_template", action="store_true", help="Use the default chat template")
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
     parser.add_argument("--ue_parameter_path", type=str, default="db/router.db", help="Path to the method parameters database")
-    parser.add_argument("--max-kv-size", type=int, help="Set the maximum key-value cache size", default=None)
     return parser.parse_args()
 
 
@@ -172,15 +170,13 @@ class ModelProvider:
                 tokenizer_config=tokenizer_config,
             )
 
-            prompt_cache = make_prompt_cache(model, self.cli_args.max_kv_size)
-
             if self.cli_args.use_default_chat_template:
                 if tokenizer.chat_template is None:
                     tokenizer.chat_template = tokenizer.default_chat_template
 
-            self.model_cache[cache_key] = (model, tokenizer, prompt_cache)
+            self.model_cache[cache_key] = (model, tokenizer)
             logger.info(f"Successfully loaded model from {model_path}")
-            return model, tokenizer, prompt_cache
+            return model, tokenizer
         except Exception as e:
             logger.error(f"Failed to load model from {model_path}: {str(e)}")
             raise
@@ -256,16 +252,16 @@ def create_app(args):
         @app.post(completion_path, response_model=Dict)
         async def create_completion(request: CompletionRequest):
             try:
-                model, tokenizer, prompt_cache = model_provider.load(model_path)
+                model, tokenizer = model_provider.load(model_path)
                 prompt = mx.array(tokenizer.encode(request.prompt))
 
                 if request.stream:
                     return StreamingResponse(
-                        stream_completion(prompt, request, model, tokenizer, prompt_cache),
+                        stream_completion(prompt, request, model, tokenizer),
                         media_type="text/event-stream"
                     )
                 else:
-                    result = await generate_completion(prompt, request, model, tokenizer, prompt_cache)
+                    result = await generate_completion(prompt, request, model, tokenizer)
                     return JSONResponse(result)
             except Exception as e:
                 logger.error(f"Completion request failed: {str(e)}")
@@ -274,7 +270,7 @@ def create_app(args):
         @app.post(chat_completion_path, response_model=Dict)
         async def create_chat_completion(request: ChatCompletionRequest):
             try:
-                model, tokenizer, prompt_cache = model_provider.load(model_path)
+                model, tokenizer = model_provider.load(model_path)
 
                 prompt = tokenizer.apply_chat_template(
                     request.messages,
@@ -291,11 +287,11 @@ def create_app(args):
 
                 if request.stream:
                     return StreamingResponse(
-                        stream_chat_completion(prompt, request, model, tokenizer, prompt_cache),
+                        stream_chat_completion(prompt, request, model, tokenizer),
                         media_type="text/event-stream"
                     )
                 else:
-                    result = await generate_chat_completion(prompt, request, model, tokenizer, prompt_cache)
+                    result = await generate_chat_completion(prompt, request, model, tokenizer)
                     return JSONResponse(result)
             except Exception as e:
                 logger.error(f"Chat completion request failed: {str(e)}")
@@ -369,7 +365,7 @@ class ChatCompletionRequest(BaseModel):
     remote_score: bool = True
 
 
-async def stream_completion(prompt, request, model, tokenizer, prompt_cache):
+async def stream_completion(prompt, request, model, tokenizer):
     created = int(time.time())
     request_id = f"cmpl-{uuid.uuid4()}"
 
@@ -390,8 +386,7 @@ async def stream_completion(prompt, request, model, tokenizer, prompt_cache):
             temp=request.temperature,
             top_p=request.top_p,
             with_hidden_states=request.with_hidden_states,
-            max_tokens=request.max_tokens,
-            prompt_cache=prompt_cache
+            max_tokens=request.max_tokens
     ):
         token = token
         detokenizer.add_token(token)
@@ -455,7 +450,7 @@ async def stream_completion(prompt, request, model, tokenizer, prompt_cache):
     yield "data: [DONE]\n\n"
 
 
-async def stream_chat_completion(prompt, request, model, tokenizer, prompt_cache):
+async def stream_chat_completion(prompt, request, model, tokenizer):
     created = int(time.time())
     request_id = f"chatcmpl-{uuid.uuid4()}"
 
@@ -476,8 +471,7 @@ async def stream_chat_completion(prompt, request, model, tokenizer, prompt_cache
             temp=request.temperature,
             top_p=request.top_p,
             with_hidden_states=request.with_hidden_states,
-            max_tokens=request.max_tokens,
-            prompt_cache=prompt_cache
+            max_tokens=request.max_tokens
     ):
         detokenizer.add_token(token)
         tokens.append(token)
@@ -538,7 +532,7 @@ async def stream_chat_completion(prompt, request, model, tokenizer, prompt_cache
     yield "data: [DONE]\n\n"
 
 
-async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens, prompt_cache):
+async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens):
     """Wrap the synchronous generate_step as an async generator."""
     sampler = make_sampler(temp, top_p)
 
@@ -548,7 +542,6 @@ async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden
         max_tokens=max_tokens,
         sampler=sampler,
         with_hidden_states=with_hidden_states,
-        prompt_cache=prompt_cache
     ):
         if token in tokenizer.eos_token_ids:
             break
@@ -556,7 +549,7 @@ async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden
         yield (token, logprobs, hidden_states)
         await asyncio.sleep(0)
 
-async def generate_completion(prompt, request, model, tokenizer, prompt_cache):
+async def generate_completion(prompt, request, model, tokenizer):
     created = int(time.time())
     request_id = f"cmpl-{uuid.uuid4()}"
 
@@ -578,8 +571,7 @@ async def generate_completion(prompt, request, model, tokenizer, prompt_cache):
                 temp=request.temperature,
                 top_p=request.top_p,
                 with_hidden_states=request.with_hidden_states,
-                max_tokens=request.max_tokens,
-                prompt_cache=prompt_cache
+                max_tokens=request.max_tokens
         ):
             detokenizer.add_token(token)
             tokens.append(token)
@@ -634,7 +626,7 @@ async def generate_completion(prompt, request, model, tokenizer, prompt_cache):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def generate_chat_completion(prompt, request, model, tokenizer, prompt_cache):
+async def generate_chat_completion(prompt, request, model, tokenizer):
     created = int(time.time())
     request_id = f"chatcmpl-{uuid.uuid4()}"
 
@@ -656,8 +648,7 @@ async def generate_chat_completion(prompt, request, model, tokenizer, prompt_cac
                 temp=request.temperature,
                 top_p=request.top_p,
                 with_hidden_states=request.with_hidden_states,
-                max_tokens=request.max_tokens,
-                prompt_cache=prompt_cache
+                max_tokens=request.max_tokens
         ):
             detokenizer.add_token(token)
             tokens.append(token)
