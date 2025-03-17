@@ -42,7 +42,7 @@ from transformers import PreTrainedTokenizer
 # Local imports
 from .models import cache
 from .tokenizer_utils import TokenizerWrapper, load_tokenizer
-from .tuner.utils import load_adapters, nparams
+from .tuner.utils import load_adapters
 
 from .models import qllama, qmixtral, qqwen2, qphi3, qdeepseek_v3
 from .models.quantized_linear_gba import QuantizedLinear

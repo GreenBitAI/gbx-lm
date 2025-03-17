@@ -1,3 +1,11 @@
+"""
+Possible directions for improvement "TODOs"
+
+- Request timeout: Add a maximum execution time for each request to prevent a long request from blocking other requests indefinitely
+- Model pool: If there are sufficient resources, a small pool of model instances (such as 2-3 instances) can be maintained to increase concurrency
+- Batch requests: Batch multiple requests together, pass the model at once, and then distribute the results
+
+"""
 import os
 import logging
 from datetime import datetime
@@ -116,6 +124,9 @@ class ServerConfig:
         self.port = port
         self.model_config = argparse.Namespace(**kwargs)
 
+        # to ensure thread safe
+        self.model_locks = {}
+
         # Store the list of models to serve
         self.models_to_serve: Set[str] = set()
         if kwargs.get("model_list"):
@@ -123,6 +134,11 @@ class ServerConfig:
         elif kwargs.get("model"):
             self.models_to_serve.add(kwargs["model"])
 
+    def get_model_lock(self, model_path: str):
+        """Get the lock for the specified model, creating it if it does not exist."""
+        if model_path not in self.model_locks:
+            self.model_locks[model_path] = asyncio.Lock()
+        return self.model_locks[model_path]
 
 class ModelProvider:
     def __init__(self, cli_args: argparse.Namespace):
@@ -252,17 +268,22 @@ def create_app(args):
         @app.post(completion_path, response_model=Dict)
         async def create_completion(request: CompletionRequest):
             try:
-                model, tokenizer = model_provider.load(model_path)
-                prompt = mx.array(tokenizer.encode(request.prompt))
+                # get model lock
+                model_lock = server_config.get_model_lock(model_path)
 
-                if request.stream:
-                    return StreamingResponse(
-                        stream_completion(prompt, request, model, tokenizer),
-                        media_type="text/event-stream"
-                    )
-                else:
-                    result = await generate_completion(prompt, request, model, tokenizer)
-                    return JSONResponse(result)
+                # Acquire lock asynchronously
+                async with model_lock:
+                    model, tokenizer = model_provider.load(model_path)
+                    prompt = mx.array(tokenizer.encode(request.prompt))
+
+                    if request.stream:
+                        return StreamingResponse(
+                            stream_completion(prompt, request, model, tokenizer),
+                            media_type="text/event-stream"
+                        )
+                    else:
+                        result = await generate_completion(prompt, request, model, tokenizer)
+                        return JSONResponse(result)
             except Exception as e:
                 logger.error(f"Completion request failed: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -270,29 +291,32 @@ def create_app(args):
         @app.post(chat_completion_path, response_model=Dict)
         async def create_chat_completion(request: ChatCompletionRequest):
             try:
-                model, tokenizer = model_provider.load(model_path)
+                model_lock = server_config.get_model_lock(model_path)
 
-                prompt = tokenizer.apply_chat_template(
-                    request.messages,
-                    add_generation_prompt=True,
-                )
+                async with model_lock:
+                    model, tokenizer = model_provider.load(model_path)
 
-                if not isinstance(prompt, mx.array):
-                    if isinstance(prompt, str):
-                        add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
-                            tokenizer.bos_token
-                        )
-                        prompt = tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
-                    prompt = mx.array(prompt)
-
-                if request.stream:
-                    return StreamingResponse(
-                        stream_chat_completion(prompt, request, model, tokenizer),
-                        media_type="text/event-stream"
+                    prompt = tokenizer.apply_chat_template(
+                        request.messages,
+                        add_generation_prompt=True,
                     )
-                else:
-                    result = await generate_chat_completion(prompt, request, model, tokenizer)
-                    return JSONResponse(result)
+
+                    if not isinstance(prompt, mx.array):
+                        if isinstance(prompt, str):
+                            add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
+                                tokenizer.bos_token
+                            )
+                            prompt = tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
+                        prompt = mx.array(prompt)
+
+                    if request.stream:
+                        return StreamingResponse(
+                            stream_chat_completion(prompt, request, model, tokenizer),
+                            media_type="text/event-stream"
+                        )
+                    else:
+                        result = await generate_chat_completion(prompt, request, model, tokenizer)
+                        return JSONResponse(result)
             except Exception as e:
                 logger.error(f"Chat completion request failed: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e))

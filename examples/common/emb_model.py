@@ -169,10 +169,14 @@ class Model:
                     bge_path = config.get('BGE_SMALL_EN_PATH')
 
         if not bge_path or not os.path.exists(bge_path):
-            raise FileNotFoundError(
-                "BGE model directory not found. Please set the BGE_SMALL_EN_PATH "
-                "environment variable or specify it in config.yaml file."
-            )
+            # If BGE_SMALL_EN_PATH is not set, check the current directory
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            potential_bge_path = os.path.join(current_dir, 'bge-small-en')
+
+            if os.path.exists(potential_bge_path):
+                bge_path = potential_bge_path
+            else:
+                return "BAAI/bge-small-en"
 
         return bge_path
 
