@@ -28,7 +28,9 @@ class QuantizedSwitchLinear(nn.Module):
         self.init_params()
         # Freeze this model's parameters
         self.freeze()
-    
+    	if bias:
+            self.bias = mx.zeros((num_experts, output_dims))
+
     def init_params(self):
         self.qweight, self.scales, self.zeros = mx.quantize(
             mx.random.uniform(

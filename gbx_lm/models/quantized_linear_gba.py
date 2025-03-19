@@ -74,7 +74,7 @@ class QuantizedLinear(Module):
         )
 
         if use_q_perm:
-            self.q_perm = mx.zeros(self.input_dims, dtype=mx.int16)
+            self.q_perm = mx.zeros((1, 1, self.input_dims), dtype=mx.int16)
 
         if use_double_quantization:
             shape_qstatistic = (
@@ -180,10 +180,10 @@ class QuantizedLinear(Module):
 
     def __call__(self, x):
         # mul channel_scale
-        x = mx.multiply(x, self.channel_scale)
+        #x = mx.multiply(x, self.channel_scale)
         # # array rearrangement if necessary
-        if hasattr(self, 'q_perm'):
-            x = mx.take_along_axis(x, self.q_perm, axis=-1)
+        #if hasattr(self, 'q_perm'):
+        #    x = mx.take_along_axis(x, self.q_perm, axis=-1)
         # quantized matmul
         x = mx.quantized_matmul(
             x,
@@ -246,7 +246,7 @@ class QuantizedLinear(Module):
                     # re-init params
                     child.init_params()
                     
-                if isinstance(child, QuantizedLinear):
+                elif isinstance(child, QuantizedLinear):
                     # read bits and group size from strategy
                     layer_number = name.split('.')[2]
                     strategy_per_block = strategy["model.layers.{}".format(layer_number)]
@@ -268,6 +268,8 @@ class QuantizedLinear(Module):
 
                     # re-init params
                     child.init_params(use_double_quantization, use_q_perm)
+                else:
+                   print(name)
 
         if strategy is None:
             leaves = model.leaf_modules()
