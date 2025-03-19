@@ -7,6 +7,8 @@ from mlx.utils import tree_flatten, tree_map
 import torch
 import numpy as np
 
+from .switch_layers import QuantizedSwitchLinear
+
 class QuantizedLinear(Module):
     """Applies an affine transformation to the input using a quantized weight matrix.
 
@@ -223,22 +225,46 @@ class QuantizedLinear(Module):
             read bits from strategy and update QuantizedLinear layers
             """
             for name, child in model.named_modules():
-                if isinstance(child, QuantizedLinear):
+                
+                if isinstance(child, QuantizedSwitchLinear):
                     # read bits and group size from strategy
                     layer_number = name.split('.')[2]
                     strategy_per_block = strategy["model.layers.{}".format(layer_number)]
-
-                    for key in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'qkv_proj', 'gate_up_proj']:
-                        if key in name:
+                    
+                    for key in ['gate_proj', 'up_proj', 'down_proj']:
+                       if key in name:
                             try:
-                                strg = strategy_per_block[key]
+                                strg = strategy_per_block['moe_expert_'+key]
                                 break
                             except KeyError:
                                 pass
                     child.bits = strg["bits"][0]
                     child.group_size = strg["group_size"][str(child.bits)]
                     assert child.group_size in [32, 64, 128], f"The group size value ({child.group_size}) must be 32, 64 or 128."
-                    # print(f'[DEBUG]: {name}: Updated QuantizedLinear bits to {child.bits}, group_size to {child.group_size}')
+                    #print(f'[DEBUG]: {name}: Updated QuantizedSwitchLinear bits to {child.bits}, group_size to {child.group_size}')
+
+                    # re-init params
+                    child.init_params()
+                    
+                if isinstance(child, QuantizedLinear):
+                    # read bits and group size from strategy
+                    layer_number = name.split('.')[2]
+                    strategy_per_block = strategy["model.layers.{}".format(layer_number)]
+
+                    for key in ['kv_a_proj_with_mqa', 'kv_b_proj', 'q_a_proj', 'q_b_proj', 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'qkv_proj', 'gate_up_proj']:
+                        if key in name:
+                            try:
+                                if "shared_expert" in name:
+                                    key = 'moe_shared_expert_'+key
+                                strg = strategy_per_block[key]
+                                break
+                            except KeyError:
+                                pass
+                
+                    child.bits = strg["bits"][0]
+                    child.group_size = strg["group_size"][str(child.bits)]
+                    assert child.group_size in [32, 64, 128], f"The group size value ({child.group_size}) must be 32, 64 or 128."
+                    #print(f'[DEBUG]: {name}: Updated QuantizedLinear bits to {child.bits}, group_size to {child.group_size}')
 
                     # re-init params
                     child.init_params(use_double_quantization, use_q_perm)
@@ -290,7 +316,6 @@ class QuantizedLinear(Module):
         leaves = model.leaf_modules()
         leaves = tree_map(_run_if_q_gba_linear, leaves, is_leaf=Module.is_module)
         model.update_modules(leaves)
-
 
     @classmethod
     def from_linear(cls, linear_layer: Module, group_size: int = 64, bits: int = 4, q_perm = None, channel_scale = None):

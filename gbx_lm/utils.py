@@ -852,9 +852,9 @@ def load_model(
         use_double_quantization = use_double_quantization,
         use_q_perm = use_q_perm
     )
-
-    model.load_weights(list(weights.items()), strict=False)
-
+    
+    model.load_weights(list(weights.items()), strict=True)
+    
     # If double quantization used in GBA models, fp16 scales and zeros will be created for supporting mlx format.
     if use_double_quantization:
         QuantizedLinear.prepare_scales_zeros(
@@ -865,10 +865,10 @@ def load_model(
         QuantizedLinear.post_processing_and_release(
             model
         )
-
+    
     if not lazy:
         mx.eval(model.parameters())
-
+    
     model.eval()
     return model, config
 
@@ -955,6 +955,7 @@ def fetch_from_hub(
         eos_token_ids=config.get("eos_token_id", None),
         tokenizer_config_extra=tokenizer_config
     )
+    print("fetched a model from hub")
     return model, config, tokenizer, model_path
 
 
