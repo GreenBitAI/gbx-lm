@@ -28,7 +28,7 @@ class QuantizedSwitchLinear(nn.Module):
         self.init_params()
         # Freeze this model's parameters
         self.freeze()
-    	if bias:
+        if bias:
             self.bias = mx.zeros((num_experts, output_dims))
 
     def init_params(self):
@@ -102,7 +102,7 @@ class SwitchLinear(nn.Module):
         ql = QuantizedSwitchLinear(
             input_dims, output_dims, num_experts, False, group_size, bits
         )
-        ql.qweight, ql.scales, ql.zeros = mx.quantize(self.weight, group_size, bits)
+        ql.qweight, ql.scales, ql.biases = mx.quantize(self.weight, group_size, bits)
         if "bias" in self:
             ql.bias = self.bias
 
@@ -117,12 +117,18 @@ class SwitchGLU(nn.Module):
         num_experts: int,
         activation=nn.silu,
         bias: bool = False,
+        quant: bool = True,
     ):
         super().__init__()
-
-        self.gate_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
-        self.up_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
-        self.down_proj = QuantizedSwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
+        if quant:
+            self.gate_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.up_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.down_proj = QuantizedSwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
+        else:
+            self.gate_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.up_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.down_proj = SwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
+        
         self.activation = activation
 
     def __call__(self, x, indices) -> mx.array:

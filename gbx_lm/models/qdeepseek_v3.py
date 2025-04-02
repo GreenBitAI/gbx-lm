@@ -152,38 +152,76 @@ class DeepseekV3Attention(nn.Module):
         self.scale = self.q_head_dim**-0.5
 
         if self.q_lora_rank is None:
-            self.q_proj = QuantizedLinear(
-                self.hidden_size, self.num_heads * self.q_head_dim, bias=False
+            if config.quant:
+                self.q_proj = QuantizedLinear(
+                    self.hidden_size, self.num_heads * self.q_head_dim, bias=False
+                )
+            else:
+                self.q_proj = nn.Linear(
+                    self.hidden_size, self.num_heads * self.q_head_dim, bias=False
+                )
+        else:
+            if config.quant:
+                self.q_a_proj = QuantizedLinear(
+                    self.hidden_size, self.q_lora_rank, bias=config.attention_bias
+                )
+            else:
+                self.q_a_proj = nn.Linear(
+                    self.hidden_size, self.q_lora_rank, bias=config.attention_bias
+                )
+            self.q_a_layernorm = nn.RMSNorm(self.q_lora_rank)
+            if config.quant:
+                self.q_b_proj = QuantizedLinear(
+                    self.q_lora_rank, self.num_heads * self.q_head_dim, bias=False
+                )
+            else:
+                self.q_b_proj = nn.Linear(
+                    self.q_lora_rank, self.num_heads * self.q_head_dim, bias=False
+                )
+        
+        if config.quant:
+            self.kv_a_proj_with_mqa = QuantizedLinear(
+                self.hidden_size,
+                self.kv_lora_rank + self.qk_rope_head_dim,
+                bias=config.attention_bias,
             )
         else:
-            self.q_a_proj = QuantizedLinear(
-                self.hidden_size, self.q_lora_rank, bias=config.attention_bias
-            )
-            self.q_a_layernorm = nn.RMSNorm(self.q_lora_rank)
-            self.q_b_proj = QuantizedLinear(
-                self.q_lora_rank, self.num_heads * self.q_head_dim, bias=False
+            self.kv_a_proj_with_mqa = nn.Linear(
+                self.hidden_size,
+                self.kv_lora_rank + self.qk_rope_head_dim,
+                bias=config.attention_bias,
             )
 
-        self.kv_a_proj_with_mqa = QuantizedLinear(
-            self.hidden_size,
-            self.kv_lora_rank + self.qk_rope_head_dim,
-            bias=config.attention_bias,
-        )
         self.kv_a_layernorm = nn.RMSNorm(self.kv_lora_rank)
-        self.kv_b_proj = QuantizedLinear(
-            self.kv_lora_rank,
-            self.num_heads
-            * (self.q_head_dim - self.qk_rope_head_dim + self.v_head_dim),
-            bias=False,
-        )
+        if config.quant:
+            self.kv_b_proj = QuantizedLinear(
+                self.kv_lora_rank,
+                self.num_heads
+                * (self.q_head_dim - self.qk_rope_head_dim + self.v_head_dim),
+                bias=False,
+            )
 
-        self.o_proj = QuantizedLinear(
-            self.num_heads * self.v_head_dim,
-            self.hidden_size,
-            bias=config.attention_bias,
-        )
+            self.o_proj = QuantizedLinear(
+                self.num_heads * self.v_head_dim,
+                self.hidden_size,
+                bias=config.attention_bias,
+            )
+        else:
+            self.kv_b_proj = nn.Linear(
+                self.kv_lora_rank,
+                self.num_heads
+                * (self.q_head_dim - self.qk_rope_head_dim + self.v_head_dim),
+                bias=False,
+            )
+
+            self.o_proj = nn.Linear(
+                self.num_heads * self.v_head_dim,
+                self.hidden_size,
+                bias=config.attention_bias,
+            )
+
 	
-	if self.config.rope_scaling is not None:
+        if self.config.rope_scaling is not None:
             mscale_all_dim = self.config.rope_scaling.get("mscale_all_dim", 0)
             scaling_factor = self.config.rope_scaling["factor"]
             if mscale_all_dim:
@@ -213,7 +251,7 @@ class DeepseekV3Attention(nn.Module):
                 dims=self.qk_rope_head_dim,
                 base=self.rope_theta,
                 traditional=True,
-
+                )
     def __call__(
         self,
         x: mx.array,
@@ -269,10 +307,15 @@ class DeepseekV3MLP(nn.Module):
         self.intermediate_size = (
             config.intermediate_size if intermediate_size is None else intermediate_size
         )
-
-        self.gate_proj = QuantizedLinear(self.hidden_size, self.intermediate_size, bias=False)
-        self.up_proj = QuantizedLinear(self.hidden_size, self.intermediate_size, bias=False)
-        self.down_proj = QuantizedLinear(self.intermediate_size, self.hidden_size, bias=False)
+        
+        if config.quant:
+            self.gate_proj = QuantizedLinear(self.hidden_size, self.intermediate_size, bias=False)
+            self.up_proj = QuantizedLinear(self.hidden_size, self.intermediate_size, bias=False)
+            self.down_proj = QuantizedLinear(self.intermediate_size, self.hidden_size, bias=False)
+        else:
+            self.gate_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+            self.up_proj = nn.Linear(self.hidden_size, self.intermediate_size, bias=False)
+            self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
 
     def __call__(self, x):
         down_proj = self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
@@ -347,6 +390,7 @@ class DeepseekV3MoE(nn.Module):
             config.moe_intermediate_size,
             config.n_routed_experts,
             activation=clipped_silu,
+            quant = config.quant,
         )
 
         self.gate = MoEGate(config)
@@ -369,6 +413,11 @@ class DeepseekV3MoE(nn.Module):
 class DeepseekV3DecoderLayer(nn.Module):
     def __init__(self, config: ModelArgs, layer_idx: int):
         super().__init__()
+        #self.self_attn = DeepseekV3Attention(config)
+        if layer_idx == 60:
+            config.quant = False
+        else:
+            config.quant = True
         self.self_attn = DeepseekV3Attention(config)
         self.mlp = (
             DeepseekV3MoE(config)

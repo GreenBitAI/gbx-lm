@@ -51,7 +51,6 @@ class QuantizedLinear(Module):
         self.output_dims = output_dims
         self.input_dims = input_dims
         self.double_group_size = 32
-
         # And bias if needed
         if bias:
             self.bias = mx.zeros((self.output_dims,))
@@ -74,7 +73,7 @@ class QuantizedLinear(Module):
         )
 
         if use_q_perm:
-            self.q_perm = mx.zeros((1, 1, self.input_dims), dtype=mx.int16)
+            self.q_perm = mx.zeros((self.input_dims), dtype=mx.int16)
 
         if use_double_quantization:
             shape_qstatistic = (

@@ -866,8 +866,8 @@ def load_model(
             model
         )
     
-    if not lazy:
-        mx.eval(model.parameters())
+    #if not lazy:
+    #    mx.eval(model.parameters())
     
     model.eval()
     return model, config
