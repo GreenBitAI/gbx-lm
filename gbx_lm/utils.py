@@ -853,7 +853,7 @@ def load_model(
         use_q_perm = use_q_perm
     )
 
-    model.load_weights(list(weights.items()), strict=False)
+    model.load_weights(list(weights.items()), strict=True)
 
     # If double quantization used in GBA models, fp16 scales and zeros will be created for supporting mlx format.
     if use_double_quantization:

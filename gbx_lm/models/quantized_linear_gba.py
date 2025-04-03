@@ -223,14 +223,36 @@ class QuantizedLinear(Module):
             read bits from strategy and update QuantizedLinear layers
             """
             for name, child in model.named_modules():
+                if isinstance(child, QuantizedSwitchLinear):
+                    # read bits and group size from strategy
+                    layer_number = name.split('.')[2]
+                    strategy_per_block = strategy["model.layers.{}".format(layer_number)]
+                    
+                    for key in ['gate_proj', 'up_proj', 'down_proj']:
+                       if key in name:
+                            try:
+                                strg = strategy_per_block['moe_expert_'+key]
+                                break
+                            except KeyError:
+                                pass
+                    child.bits = strg["bits"][0]
+                    child.group_size = strg["group_size"][str(child.bits)]
+                    assert child.group_size in [32, 64, 128], f"The group size value ({child.group_size}) must be 32, 64 or 128."
+                    
+                    # re-init params
+                    child.init_params()
+
+
                 if isinstance(child, QuantizedLinear):
                     # read bits and group size from strategy
                     layer_number = name.split('.')[2]
                     strategy_per_block = strategy["model.layers.{}".format(layer_number)]
 
-                    for key in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'qkv_proj', 'gate_up_proj']:
+                    for key in ['kv_a_proj_with_mqa', 'kv_b_proj', 'q_a_proj', 'q_b_proj', 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'qkv_proj', 'gate_up_proj']:
                         if key in name:
                             try:
+                                if "shared_expert" in name:
+                                    key = 'moe_shared_expert_'+key
                                 strg = strategy_per_block[key]
                                 break
                             except KeyError:
