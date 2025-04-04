@@ -25,6 +25,14 @@ import asyncio
 from .utils import generate_step, load
 from .sample_utils import make_sampler
 
+# Try to import mlx_lm for mlx-community models
+try:
+    import mlx_lm
+    HAVE_MLX_LM = True
+except ImportError:
+    HAVE_MLX_LM = False
+
+
 PROJECT_ROOT = Path(__file__).parent.parent
 LOG_DIR = PROJECT_ROOT / "logs"
 
@@ -172,19 +180,33 @@ class ModelProvider:
             if cache_key in self.model_cache:
                 return self.model_cache[cache_key]
 
-            tokenizer_config = {
-                "trust_remote_code": True if self.cli_args.trust_remote_code else None,
-                "eos_token": "<|im_end|>" if model_path.lower().__contains__("qwen") else "<|eot_id|>",
-            }
-            if self.cli_args.chat_template:
-                tokenizer_config["chat_template"] = self.cli_args.chat_template
+            # Check if this is an mlx-community model and if mlx-lm is available
+            is_mlx_community = model_path.startswith("mlx-community/") and HAVE_MLX_LM
 
-            self._validate_model_path(model_path)
-            model, tokenizer = load(
-                model_path,
-                adapter_path=(adapter_path if adapter_path else self.cli_args.adapter_path),
-                tokenizer_config=tokenizer_config,
-            )
+            if is_mlx_community:
+                # Use mlx-lm's load function
+                logger.info(f"Using mlx_lm to load model from {model_path}")
+                model, tokenizer = mlx_lm.load(
+                    model_path,
+                    adapter_path=(adapter_path if adapter_path else self.cli_args.adapter_path),
+                    tokenizer_config={"trust_remote_code": True}
+                )
+            else:
+                # Original GreenBitAI model loading logic
+                logger.info(f"Using gbx-lm to load model from {model_path}")
+                tokenizer_config = {
+                    "trust_remote_code": True if self.cli_args.trust_remote_code else None,
+                    "eos_token": "<|im_end|>" if model_path.lower().__contains__("qwen") else "<|eot_id|>",
+                }
+                if self.cli_args.chat_template:
+                    tokenizer_config["chat_template"] = self.cli_args.chat_template
+
+                self._validate_model_path(model_path)
+                model, tokenizer = load(
+                    model_path,
+                    adapter_path=(adapter_path if adapter_path else self.cli_args.adapter_path),
+                    tokenizer_config=tokenizer_config,
+                )
 
             if self.cli_args.use_default_chat_template:
                 if tokenizer.chat_template is None:
@@ -560,18 +582,37 @@ async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden
     """Wrap the synchronous generate_step as an async generator."""
     sampler = make_sampler(temp, top_p)
 
-    for token, logprobs, hidden_states in generate_step(
-        prompt=prompt,
-        model=model,
-        max_tokens=max_tokens,
-        sampler=sampler,
-        with_hidden_states=with_hidden_states,
-    ):
-        if token in tokenizer.eos_token_ids:
-            break
+    # Determine if we're using a mlx-community model
+    is_mlx_community = hasattr(model, '_loaded_with_mlx_lm') or 'mlx_community' in str(model.__class__)
 
-        yield (token, logprobs, hidden_states)
-        await asyncio.sleep(0)
+    if is_mlx_community and HAVE_MLX_LM:
+        # Use mlx_lm's generate_step for mlx-community models
+        for token_data in mlx_lm.generate.generate_step(
+                prompt=prompt,
+                model=model,
+                max_tokens=max_tokens,
+                sampler=sampler,
+        ):
+            token, logprobs = token_data
+            if token in tokenizer.eos_token_ids:
+                break
+
+            yield (token, logprobs, None)  # mlx_lm doesn't support hidden_states currently
+            await asyncio.sleep(0)
+    else:
+        # Use original generate_step for GreenBitAI models
+        for token, logprobs, hidden_states in generate_step(
+            prompt=prompt,
+            model=model,
+            max_tokens=max_tokens,
+            sampler=sampler,
+            with_hidden_states=with_hidden_states,
+        ):
+            if token in tokenizer.eos_token_ids:
+                break
+
+            yield (token, logprobs, hidden_states)
+            await asyncio.sleep(0)
 
 async def generate_completion(prompt, request, model, tokenizer):
     created = int(time.time())
@@ -733,6 +774,12 @@ def main():
     try:
         import uvicorn
         args = parse_args()
+
+        # Check if mlx-lm is available
+        if not HAVE_MLX_LM:
+            print("WARNING: mlx-lm is not installed. Support for mlx-community models will be disabled.")
+            print("To enable mlx-community models, install mlx-lm: pip install mlx-lm")
+
         app, server_config, logger = create_app(args)
         logger.info(f"Starting server on {server_config.host}:{server_config.port}")
         uvicorn.run(app, host=server_config.host, port=server_config.port)
