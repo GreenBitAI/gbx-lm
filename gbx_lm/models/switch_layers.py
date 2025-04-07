@@ -66,8 +66,8 @@ class QuantizedSwitchLinear(nn.Module):
         x = mx.gather_qmm(
             x,
             self["qweight"],
-            self["scales"],
-            self["zeros"],
+            self["scales"].astype(mx.float32),
+            self["zeros"].astype(mx.float32),
             rhs_indices=indices,
             transpose=True,
             group_size=self.group_size,
