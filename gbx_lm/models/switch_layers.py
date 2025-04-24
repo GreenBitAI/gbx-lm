@@ -62,16 +62,17 @@ class QuantizedSwitchLinear(nn.Module):
         super().unfreeze(*args, **kwargs)
         self.freeze(recurse=False)
     
-    def __call__(self, x, indices):
+    def __call__(self, x, indices, sorted_indices=False):
         x = mx.gather_qmm(
             x,
-            self["qweight"],
+            self["qweight"].astype(mx.uint32),
             self["scales"].astype(mx.float32),
             self["zeros"].astype(mx.float32),
             rhs_indices=indices,
             transpose=True,
             group_size=self.group_size,
             bits=self.bits,
+            sorted_indices=sorted_indices
         )
         if "bias" in self:
             x = x + mx.expand_dims(self["bias"][indices], -2)
@@ -139,6 +140,7 @@ class SwitchGLU(nn.Module):
             self.up_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
             self.down_proj = QuantizedSwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
         else:
+            print("using fp16 layers")
             self.gate_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
             self.up_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
             self.down_proj = SwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
@@ -148,15 +150,15 @@ class SwitchGLU(nn.Module):
     def __call__(self, x, indices) -> mx.array:
         x = mx.expand_dims(x, (-2, -3))
 
-        should_sort = (x.size // x.shape[-1]) >= 128
+        should_sort = indices.size>=64
         idx = indices
         inv_order = None
         if should_sort:
             x, idx, inv_order = _gather_sort(x, indices)
 
-        x_up = self.up_proj(x, idx)
-        x_gate = self.gate_proj(x, idx)
-        x = self.down_proj(self.activation(x_gate) * x_up, idx)
+        x_up = self.up_proj(x, idx, sorted_indices=should_sort)
+        x_gate = self.gate_proj(x, idx, sorted_indices=should_sort)
+        x = self.down_proj(self.activation(x_gate) * x_up, idx, sorted_indices=should_sort)
 
         if should_sort:
             x = _scatter_unsort(x, inv_order, indices.shape)

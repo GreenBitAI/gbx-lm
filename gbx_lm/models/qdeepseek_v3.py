@@ -167,7 +167,7 @@ class DeepseekV3Attention(nn.Module):
                 self.q_a_proj = nn.Linear(
                     self.hidden_size, self.q_lora_rank, bias=config.attention_bias
                 )
-            self.q_a_layernorm = nn.RMSNorm(self.q_lora_rank)
+            self.q_a_layernorm = nn.RMSNorm(self.q_lora_rank, eps=1e-6)
             if config.quant:
                 self.q_b_proj = QuantizedLinear(
                     self.q_lora_rank, self.num_heads * self.q_head_dim, bias=False
@@ -190,7 +190,7 @@ class DeepseekV3Attention(nn.Module):
                 bias=config.attention_bias,
             )
 
-        self.kv_a_layernorm = nn.RMSNorm(self.kv_lora_rank)
+        self.kv_a_layernorm = nn.RMSNorm(self.kv_lora_rank, eps=1e-6)
         if config.quant:
             self.kv_b_proj = QuantizedLinear(
                 self.kv_lora_rank,
@@ -217,24 +217,6 @@ class DeepseekV3Attention(nn.Module):
                 self.hidden_size,
                 bias=config.attention_bias,
             )
-
-        mscale_all_dim = self.config.rope_scaling.get("mscale_all_dim", 0)
-        scaling_factor = self.config.rope_scaling["factor"]
-        if mscale_all_dim:
-            mscale = yarn_get_mscale(scaling_factor, mscale_all_dim)
-            self.scale = self.scale * mscale * mscale
-
-        rope_kwargs = {
-            key: self.config.rope_scaling[key]
-            for key in [
-                "original_max_position_embeddings",
-                "beta_fast",
-                "beta_slow",
-                "mscale",
-                "mscale_all_dim",
-            ]
-            if key in self.config.rope_scaling
-        }
 
         if self.config.rope_scaling is not None:
             mscale_all_dim = self.config.rope_scaling.get("mscale_all_dim", 0)
@@ -429,7 +411,7 @@ class DeepseekV3MoE(nn.Module):
 class DeepseekV3DecoderLayer(nn.Module):
     def __init__(self, config: ModelArgs, layer_idx: int):
         super().__init__()
-        if layer_idx == 60:
+        if layer_idx == 100:
             config.quant = False
         else:
             config.quant = True
