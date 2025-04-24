@@ -411,6 +411,7 @@ class DeepseekV3MoE(nn.Module):
 class DeepseekV3DecoderLayer(nn.Module):
     def __init__(self, config: ModelArgs, layer_idx: int):
         super().__init__()
+        self.layer_idx=layer_idx
         if layer_idx == 100:
             config.quant = False
         else:
@@ -439,6 +440,7 @@ class DeepseekV3DecoderLayer(nn.Module):
         r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = x + r
         r = self.mlp(self.post_attention_layernorm(h))
+        print("layer output:{} {}".format(self.layer_idx, r+h))
         return h + r
 
 
@@ -523,6 +525,7 @@ class Model(nn.Module):
         mask: Optional[mx.array] = None,
     ):
         out = self.model(inputs, cache, mask)
+        #print(out)
         return self.lm_head(out)
 
     def sanitize(self, weights):
@@ -537,6 +540,11 @@ class Model(nn.Module):
                         ]
                         weights[f"{prefix}.mlp.switch_mlp.{m}.{k}"] = mx.stack(to_join)
 
+                if f"{prefix}.mlp.experts.0.{m}.channel_scale" in weights and f"{prefix}.mlp.experts.0.{m}.q_perm" in weights:
+                    for e in range(self.args.n_routed_experts):
+                        weights.pop(f"{prefix}.mlp.experts.{e}.{m}.channel_scale")
+                        weights.pop(f"{prefix}.mlp.experts.{e}.{m}.q_perm")
+        
         # Remove multi-token prediction layer and any unused precomputed rotary freqs
         return {
             k: v
