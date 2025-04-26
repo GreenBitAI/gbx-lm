@@ -55,6 +55,17 @@ class QuantizedSwitchLinear(nn.Module):
             group_size=self.group_size,
             bits=self.bits,
         )
+	
+    def set_bias_and_weight(self):
+        # There is a small error in the mlx document. Although the document indicates
+        # q_weight * scale - zero, however '+' is used in the actual calculation.
+        # Therefore, here we need to add the negative sign manually.
+        self.zeros = -self.zeros
+
+        # check if no q_perm Assignment we release it
+        if hasattr(self, 'q_perm'):
+            # to 3D in order to use mx.take_along_axis to re-arrange x's permutation in forward
+            self.q_perm = self.q_perm.reshape(1, 1, -1)
         
     def unfreeze(self, *args, **kwargs):
         """Wrap unfreeze so that we unfreeze any layers we might contain but
@@ -65,9 +76,9 @@ class QuantizedSwitchLinear(nn.Module):
     def __call__(self, x, indices, sorted_indices=False):
         x = mx.gather_qmm(
             x,
-            self["qweight"].astype(mx.uint32),
-            self["scales"].astype(mx.float32),
-            self["zeros"].astype(mx.float32),
+            self["qweight"],
+            self["scales"],
+            self["zeros"],
             rhs_indices=indices,
             transpose=True,
             group_size=self.group_size,

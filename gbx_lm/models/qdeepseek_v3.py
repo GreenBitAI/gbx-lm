@@ -440,7 +440,7 @@ class DeepseekV3DecoderLayer(nn.Module):
         r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = x + r
         r = self.mlp(self.post_attention_layernorm(h))
-        print("layer output:{} {}".format(self.layer_idx, r+h))
+        #print("layer output:{} {}".format(self.layer_idx, r+h))
         return h + r
 
 
@@ -448,7 +448,7 @@ class DeepseekV3Model(nn.Module):
     def __init__(self, config: ModelArgs):
         super().__init__()
         self.vocab_size = config.vocab_size
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size) #nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = [
             DeepseekV3DecoderLayer(config, idx)
             for idx in range(config.num_hidden_layers)

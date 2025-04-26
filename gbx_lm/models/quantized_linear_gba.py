@@ -3,7 +3,7 @@ import math
 import mlx.core as mx
 from mlx.nn.layers.base import Module
 from mlx.utils import tree_flatten, tree_map
-
+from .switch_layers import QuantizedSwitchLinear
 import torch
 import numpy as np
 
@@ -72,7 +72,7 @@ class QuantizedLinear(Module):
         )
 
         if use_q_perm:
-            self.q_perm = mx.zeros(self.input_dims, dtype=mx.int16)
+            self.q_perm = mx.zeros(shape=(1, 1, self.input_dims), dtype=mx.int16)
 
         if use_double_quantization:
             shape_qstatistic = (
@@ -177,11 +177,14 @@ class QuantizedLinear(Module):
         )
 
     def __call__(self, x):
-        # mul channel_scale
-        x = mx.multiply(x, self.channel_scale)
-        # # array rearrangement if necessary
-        if hasattr(self, 'q_perm'):
-            x = mx.take_along_axis(x, self.q_perm, axis=-1)
+        # # mul channel_scale
+        # if hasattr(self, 'channel_scale'):
+        #     x = mx.multiply(x, self.channel_scale)
+        #
+        # # # array rearrangement if necessary
+        # if hasattr(self, 'q_perm'):
+        #     x = mx.take_along_axis(x, self.q_perm, axis=-1)
+
         # quantized matmul
         x = mx.quantized_matmul(
             x,
@@ -194,6 +197,7 @@ class QuantizedLinear(Module):
         )
         if "bias" in self:
             x = x + self.bias
+        #print(x)
         return x
 
 
@@ -294,7 +298,7 @@ class QuantizedLinear(Module):
     def post_processing_and_release(
         cls,
         model: Module,
-        gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear),
+        gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear, QuantizedSwitchLinear),
     ):
         """
         Changes all zeros to -zeros.
