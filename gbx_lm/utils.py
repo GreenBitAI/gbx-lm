@@ -124,7 +124,7 @@ def wired_limit(model: nn.Module, streams: Optional[List[mx.Stream]] = None):
             "MB. This can be slow. See the documentation for possible work-arounds: "
             "https://github.com/ml-explore/mlx-examples/tree/main/llms#large-models"
         )
-    old_limit = mx.metal.set_wired_limit(max_rec_size)
+    old_limit = mx.set_wired_limit(max_rec_size)
     try:
         yield None
     finally:
@@ -133,7 +133,7 @@ def wired_limit(model: nn.Module, streams: Optional[List[mx.Stream]] = None):
                 mx.synchronize(s)
         else:
             mx.synchronize()
-        mx.metal.set_wired_limit(old_limit)
+        mx.set_wired_limit(old_limit)
 
 
 def _get_classes(config: dict):
@@ -314,7 +314,7 @@ def generate_step(
             prompt_progress_callback(prompt_processed_tokens, total_prompt_tokens)
             prompt_processed_tokens += prefill_step_size
             y = y[prefill_step_size:]
-            mx.metal.clear_cache()
+            mx.clear_cache()
 
         y, logprobs, h_states = _step(y, hidden_states=with_hidden_states)
 
@@ -331,7 +331,7 @@ def generate_step(
             break
         yield y.item(), logprobs, h_states
         if n % 256 == 0:
-            mx.metal.clear_cache()
+            mx.clear_cache()
         y, logprobs = next_y, next_logprobs
         n += 1
 
@@ -445,7 +445,7 @@ def speculative_generate_step(
             quantize_cache_fn(cache)
             mx.eval([c.state for c in cache])
             y = y[prefill_step_size:]
-            mx.metal.clear_cache()
+            mx.clear_cache()
         return y
 
     def _rewind_cache(num_draft, num_accept):
@@ -603,7 +603,7 @@ def stream_generate(
                 prompt_tps=prompt_tps,
                 generation_tokens=n + 1,
                 generation_tps=(n + 1) / (time.perf_counter() - tic),
-                peak_memory=mx.metal.get_peak_memory() / 1e9,
+                peak_memory=mx.get_peak_memory() / 1e9,
                 finish_reason=None,
                 hidden_states=hidden_states
             )
@@ -618,7 +618,7 @@ def stream_generate(
             prompt_tps=prompt_tps,
             generation_tokens=n + 1,
             generation_tps=(n + 1) / (time.perf_counter() - tic),
-            peak_memory=mx.metal.get_peak_memory() / 1e9,
+            peak_memory=mx.get_peak_memory() / 1e9,
             finish_reason="stop" if token in tokenizer.eos_token_ids else "length",
             hidden_states=hidden_states
         )
@@ -834,15 +834,21 @@ def load_model(
                 weights[k] = v.transpose().astype(mx.uint32)
             if not use_double_quantization and ('scales' in k or 'zeros' in k):
                 weights[k] = v.transpose()
+            if "norm.weight" in k or "bias" in k or "gate.weight" in k or "lm_head" in k or "embed_tokens" in k or "channel_scale" in k:
+                weights[k] = v.astype(mx.bfloat16)
     ## ===================================================================##
-
+    
+    for k, v in weights.items():
+        if "scale" in k or "zeros" in k:
+                weights[k] = v.astype(mx.bfloat16)
+    
     model_class, model_args_class = get_model_classes(config=config)
 
     model_args = model_args_class.from_dict(config)
     model = model_class(model_args)
 
     if hasattr(model, "sanitize"):
-        weights = model.sanitize(weights)
+        weights = model.sanitize(weights) 
 
     # update QuantizedLinear layers using quantization parameters.
     QuantizedLinear.reinit_module(
@@ -852,7 +858,7 @@ def load_model(
         use_double_quantization = use_double_quantization,
         use_q_perm = use_q_perm
     )
-    #print(model)
+   
     model.load_weights(list(weights.items()), strict=False)
 
     # If double quantization used in GBA models, fp16 scales and zeros will be created for supporting mlx format.

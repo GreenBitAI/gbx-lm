@@ -151,7 +151,6 @@ class SwitchGLU(nn.Module):
             self.up_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
             self.down_proj = QuantizedSwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
         else:
-            print("using fp16 layers")
             self.gate_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
             self.up_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
             self.down_proj = SwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
