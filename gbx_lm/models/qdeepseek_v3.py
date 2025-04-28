@@ -483,18 +483,18 @@ class Model(nn.Module):
         for l in range(self.args.num_hidden_layers):
             prefix = f"model.layers.{l}"
             for n, m in [("w1", "gate_proj"), ("w2", "down_proj"), ("w3", "up_proj")]:
-                for k in ["qweight", "scales", "zeros"]:
+                for k in ["weight", "scales", "biases"]:
                     if f"{prefix}.mlp.experts.0.{m}.{k}" in weights:
                         to_join = [
                             weights.pop(f"{prefix}.mlp.experts.{e}.{m}.{k}")
                             for e in range(self.args.n_routed_experts)
                         ]
                         weights[f"{prefix}.mlp.switch_mlp.{m}.{k}"] = mx.stack(to_join)
-        
+
                 if f"{prefix}.mlp.experts.0.{m}.channel_scale" in weights and f"{prefix}.mlp.experts.0.{m}.q_perm" in weights:
                     for e in range(self.args.n_routed_experts):
                         weights.pop(f"{prefix}.mlp.experts.{e}.{m}.channel_scale")
-                        weights.pop(f"{prefix}.mlp.experts.{e}.{m}.q_perm")	
+                        weights.pop(f"{prefix}.mlp.experts.{e}.{m}.q_perm")
 
         # Remove multi-token prediction layer
         return {k: v for k, v in weights.items() if not k.startswith("model.layers.61")}

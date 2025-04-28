@@ -834,7 +834,7 @@ def load_model(
         for k, v in weights.items():
             if 'qweight' in k:
                 weights[k] = v.transpose().astype(mx.uint32)
-                
+
             if not use_double_quantization and ('scales' in k or 'zeros' in k):
                 weights[k] = v.transpose().astype(mx.bfloat16)
 
@@ -862,8 +862,8 @@ def load_model(
         use_double_quantization = use_double_quantization,
         use_q_perm = use_q_perm
     )
-   
-    model.load_weights(list(weights.items()), strict=True)
+
+    model.load_weights(list(weights.items()), strict=False)
 
     # If double quantization used in GBA models, fp16 scales and zeros will be created for supporting mlx format.
     if use_double_quantization:
