@@ -6,7 +6,21 @@ import math
 import mlx.core as mx
 import mlx.nn as nn
 
-# TODO: convert to gba_quantized linear layer
+def _gather_sort(x, indices):
+    *_, M = indices.shape
+    indices = indices.flatten()
+    order = mx.argsort(indices)
+    inv_order = mx.argsort(order)
+    return x.flatten(0, -3)[order // M], indices[order], inv_order
+
+
+def _scatter_unsort(x, inv_order, shape=None):
+    x = x[inv_order]
+    if shape is not None:
+        x = mx.unflatten(x, 0, shape)
+    return x
+
+
 class QuantizedSwitchLinear(nn.Module):
     def __init__(
         self,
@@ -19,54 +33,57 @@ class QuantizedSwitchLinear(nn.Module):
     ):
         super().__init__()
 
-        scale = math.sqrt(1 / input_dims)
-        self.weight, self.scales, self.biases = mx.quantize(
-            mx.random.uniform(
-                low=-scale,
-                high=scale,
-                shape=(num_experts, output_dims, input_dims),
-            ),
-            group_size=group_size,
-            bits=bits,
-        )
-
+        self.scale = math.sqrt(1 / input_dims)
+        self.input_dims = input_dims
+        self.output_dims = output_dims
+        self.group_size = group_size
+        self.bits = bits
+        self.num_experts = num_experts
+        self.init_params()
+        # Freeze this model's parameters
+        self.freeze()
         if bias:
             self.bias = mx.zeros((num_experts, output_dims))
 
-        self.group_size = group_size
-        self.bits = bits
+    def init_params(self):
+        self.qweight, self.scales, self.zeros = mx.quantize(
+            mx.random.uniform(
+                low=-self.scale,
+                high=self.scale,
+                shape=(self.num_experts, self.output_dims, self.input_dims),
+            ),
+            group_size=self.group_size,
+            bits=self.bits,
+        )
+	
+    def set_bias_and_weight(self):
+        # There is a small error in the mlx document. Although the document indicates
+        # q_weight * scale - zero, however '+' is used in the actual calculation.
+        # Therefore, here we need to add the negative sign manually.
+        self.zeros = -self.zeros
 
-        # Freeze this model's parameters
-        self.freeze()
-
+        # check if no q_perm Assignment we release it
+        if hasattr(self, 'q_perm'):
+            # to 3D in order to use mx.take_along_axis to re-arrange x's permutation in forward
+            self.q_perm = self.q_perm.reshape(1, 1, -1)
+        
     def unfreeze(self, *args, **kwargs):
         """Wrap unfreeze so that we unfreeze any layers we might contain but
         our parameters will remain frozen."""
         super().unfreeze(*args, **kwargs)
         self.freeze(recurse=False)
-
-    @property
-    def input_dims(self):
-        return self.scales.shape[2] * self.group_size
-
-    @property
-    def output_dims(self):
-        return self.weight.shape[1]
-
-    @property
-    def num_experts(self):
-        return self.weight.shape[0]
-
-    def __call__(self, x, indices):
+    
+    def __call__(self, x, indices, sorted_indices=False):
         x = mx.gather_qmm(
             x,
-            self["weight"],
+            self["qweight"],
             self["scales"],
-            self["biases"],
+            self["zeros"],
             rhs_indices=indices,
             transpose=True,
             group_size=self.group_size,
             bits=self.bits,
+            sorted_indices=sorted_indices
         )
         if "bias" in self:
             x = x + mx.expand_dims(self["bias"][indices], -2)
@@ -125,22 +142,40 @@ class SwitchGLU(nn.Module):
         num_experts: int,
         activation=nn.silu,
         bias: bool = False,
+        quant: bool = True,
     ):
         super().__init__()
 
-        self.gate_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
-        self.up_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
-        self.down_proj = SwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
+        if quant:
+            self.gate_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.up_proj = QuantizedSwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.down_proj = QuantizedSwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
+        else:
+            print("using fp16 layers")
+            self.gate_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.up_proj = SwitchLinear(input_dims, hidden_dims, num_experts, bias=bias)
+            self.down_proj = SwitchLinear(hidden_dims, input_dims, num_experts, bias=bias)
+
         self.activation = activation
 
     def __call__(self, x, indices) -> mx.array:
         x = mx.expand_dims(x, (-2, -3))
 
-        x_up = self.up_proj(x, indices)
-        x_gate = self.gate_proj(x, indices)
-        x = self.down_proj(self.activation(x_gate) * x_up, indices)
+        should_sort = indices.size>=64
+        idx = indices
+        inv_order = None
+        if should_sort:
+            x, idx, inv_order = _gather_sort(x, indices)
+
+        x_up = self.up_proj(x, idx, sorted_indices=should_sort)
+        x_gate = self.gate_proj(x, idx, sorted_indices=should_sort)
+        x = self.down_proj(self.activation(x_gate) * x_up, idx, sorted_indices=should_sort)
+
+        if should_sort:
+            x = _scatter_unsort(x, inv_order, indices.shape)
 
         return x.squeeze(-2)
+
 
 
 class SwitchMLP(nn.Module):

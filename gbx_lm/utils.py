@@ -221,7 +221,7 @@ def generate_step(
     logits_processors: Optional[List[Callable[[mx.array, mx.array], mx.array]]] = None,
     max_kv_size: Optional[int] = None,
     prompt_cache: Optional[Any] = None,
-    prefill_step_size: int = 512,
+    prefill_step_size: int = 2048,
     kv_bits: Optional[int] = None,
     kv_group_size: int = 64,
     quantized_kv_start: int = 0,
@@ -852,7 +852,7 @@ def load_model(
         use_double_quantization = use_double_quantization,
         use_q_perm = use_q_perm
     )
-
+    #print(model)
     model.load_weights(list(weights.items()), strict=False)
 
     # If double quantization used in GBA models, fp16 scales and zeros will be created for supporting mlx format.

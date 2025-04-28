@@ -3,7 +3,7 @@ import math
 import mlx.core as mx
 from mlx.nn.layers.base import Module
 from mlx.utils import tree_flatten, tree_map
-
+from .switch_layers import QuantizedSwitchLinear
 import torch
 import numpy as np
 
@@ -72,7 +72,7 @@ class QuantizedLinear(Module):
         )
 
         if use_q_perm:
-            self.q_perm = mx.zeros(self.input_dims, dtype=mx.int16)
+            self.q_perm = mx.zeros(shape=(1, 1, self.input_dims), dtype=mx.int16)
 
         if use_double_quantization:
             shape_qstatistic = (
@@ -177,11 +177,14 @@ class QuantizedLinear(Module):
         )
 
     def __call__(self, x):
-        # mul channel_scale
-        x = mx.multiply(x, self.channel_scale)
-        # # array rearrangement if necessary
-        if hasattr(self, 'q_perm'):
-            x = mx.take_along_axis(x, self.q_perm, axis=-1)
+        # # mul channel_scale
+        # if hasattr(self, 'channel_scale'):
+        #     x = mx.multiply(x, self.channel_scale)
+        #
+        # # # array rearrangement if necessary
+        # if hasattr(self, 'q_perm'):
+        #     x = mx.take_along_axis(x, self.q_perm, axis=-1)
+
         # quantized matmul
         x = mx.quantized_matmul(
             x,
@@ -194,6 +197,7 @@ class QuantizedLinear(Module):
         )
         if "bias" in self:
             x = x + self.bias
+        #print(x)
         return x
 
 
@@ -223,14 +227,36 @@ class QuantizedLinear(Module):
             read bits from strategy and update QuantizedLinear layers
             """
             for name, child in model.named_modules():
+                if isinstance(child, QuantizedSwitchLinear):
+                    # read bits and group size from strategy
+                    layer_number = name.split('.')[2]
+                    strategy_per_block = strategy["model.layers.{}".format(layer_number)]
+                    
+                    for key in ['gate_proj', 'up_proj', 'down_proj']:
+                       if key in name:
+                            try:
+                                strg = strategy_per_block['moe_expert_'+key]
+                                break
+                            except KeyError:
+                                pass
+                    child.bits = strg["bits"][0]
+                    child.group_size = strg["group_size"][str(child.bits)]
+                    assert child.group_size in [32, 64, 128], f"The group size value ({child.group_size}) must be 32, 64 or 128."
+                    
+                    # re-init params
+                    child.init_params()
+
+
                 if isinstance(child, QuantizedLinear):
                     # read bits and group size from strategy
                     layer_number = name.split('.')[2]
                     strategy_per_block = strategy["model.layers.{}".format(layer_number)]
 
-                    for key in ['q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'qkv_proj', 'gate_up_proj']:
+                    for key in ['kv_a_proj_with_mqa', 'kv_b_proj', 'q_a_proj', 'q_b_proj', 'q_proj', 'k_proj', 'v_proj', 'o_proj', 'gate_proj', 'up_proj', 'down_proj', 'qkv_proj', 'gate_up_proj']:
                         if key in name:
                             try:
+                                if "shared_expert" in name:
+                                    key = 'moe_shared_expert_'+key
                                 strg = strategy_per_block[key]
                                 break
                             except KeyError:
@@ -272,7 +298,7 @@ class QuantizedLinear(Module):
     def post_processing_and_release(
         cls,
         model: Module,
-        gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear),
+        gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear, QuantizedSwitchLinear),
     ):
         """
         Changes all zeros to -zeros.
