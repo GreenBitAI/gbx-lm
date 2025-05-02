@@ -178,11 +178,11 @@ class QuantizedLinear(Module):
 
     def __call__(self, x):
         # mul channel_scale
-        if hasattr(self, 'channel_scale'):
-             x = mx.multiply(x, self.channel_scale)
+        #if hasattr(self, 'channel_scale'):
+        #     x = mx.multiply(x, self.channel_scale)
         # array rearrangement if necessary
-        if hasattr(self, 'q_perm'):
-             x = mx.take_along_axis(x, self.q_perm, axis=-1)
+        #if hasattr(self, 'q_perm'):
+        #     x = mx.take_along_axis(x, self.q_perm, axis=-1)
 
         # quantized matmul
         x = mx.quantized_matmul(
