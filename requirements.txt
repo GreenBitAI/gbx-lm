@@ -1,12 +1,24 @@
-mlx>=0.22.0
+# Core machine learning framework
+mlx>=0.25.0
+mlx-lm>=0.24.0 # (optional if use mlx model)
 numpy
-protobuf
-torch>=2.0.0
-sentencepiece
-transformers>=4.39.3
+
+# Models and tokenizers
+transformers[sentencepiece]>=4.39.3
 huggingface_hub
-pyyaml
-jinja2
+
+# API service related
 fastapi
 uvicorn
 pydantic
+
+# Data processing
+datasets # Used in datasets.py
+
+# Necessary tools
+torch>=2.0.0 # For quantized matrix processing
+protobuf # For serialization
+pyyaml # For configuration files
+
+# Langchain related
+langchain-core  # in chat_gbx.py and gbx_pipeline.py

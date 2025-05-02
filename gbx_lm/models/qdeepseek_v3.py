@@ -473,9 +473,11 @@ class Model(nn.Module):
         inputs: mx.array,
         cache: Optional[Any] = None,
         mask: Optional[mx.array] = None,
+        hidden_states=False
     ):
         out = self.model(inputs, cache, mask)
-        return self.lm_head(out)
+        out = (self.lm_head(out), out) if hidden_states else self.lm_head(out)
+        return out
 
     def sanitize(self, weights):
         for l in range(self.args.num_hidden_layers):

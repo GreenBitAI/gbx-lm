@@ -7,15 +7,17 @@ dependencies:
   - pip=24.0
   - pytorch::pytorch>=2.0
   - pip:
-      - mlx>=0.22.0
+      - mlx>=0.25.0
       - numpy
-      - protobuf
-      - torch>=2.0.0
-      - sentencepiece
+      - transformers[sentencepiece]>=4.39.3
       - huggingface_hub
-      - transformers>=4.39.3
+      - torch>=2.0.0
+      - protobuf
       - pyyaml
-      - jinja2
+      - datasets
       - fastapi
       - uvicorn
       - pydantic
+      # Optional dependencies below - comment as not needed
+      - langchain-core  # For LangChain integration
+      - mlx-lm>=0.24.0  # For MLX-LM model support
