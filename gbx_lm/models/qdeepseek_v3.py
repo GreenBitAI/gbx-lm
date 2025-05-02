@@ -440,7 +440,6 @@ class DeepseekV3DecoderLayer(nn.Module):
         r = self.self_attn(self.input_layernorm(x), mask, cache)
         h = x + r
         r = self.mlp(self.post_attention_layernorm(h))
-        #print("layer output:{} {}".format(self.layer_idx, r+h))
         return h + r
 
 
@@ -523,10 +522,11 @@ class Model(nn.Module):
         inputs: mx.array,
         cache: Optional[Any] = None,
         mask: Optional[mx.array] = None,
+        hidden_states=False
     ):
         out = self.model(inputs, cache, mask)
-        #print(out)
-        return self.lm_head(out)
+        out = (self.lm_head(out), out) if hidden_states else self.lm_head(out)
+        return out
 
     def sanitize(self, weights):
         for l in range(self.args.num_hidden_layers):

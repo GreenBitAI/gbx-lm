@@ -16,6 +16,7 @@ pip install gbx-lm
 
 ```bash
 pip install langchain-core
+pip install json-repair
 ```
 
 Ensure your system has Python3 and pip installed before proceeding.

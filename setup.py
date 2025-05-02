@@ -4,11 +4,57 @@ from pathlib import Path
 from setuptools import setup, find_packages
 
 package_dir = Path(__file__).parent / "gbx_lm"
-with open(Path(__file__).parent / "requirements.txt") as fid:
-    requirements = [l.strip() for l in fid.readlines()]
-
 sys.path.append(str(package_dir))
 from version import __version__
+
+# Define core dependencies
+core_requirements = [
+    "mlx>=0.25.0",
+    "numpy",
+    "transformers[sentencepiece]>=4.39.3",  # Include sentencepiece for tokenizer support
+    "huggingface_hub",
+    "torch>=2.0.0",
+    "protobuf",
+    "pyyaml",
+    "datasets"
+]
+
+# FastAPI server related dependencies - included by default
+server_requirements = [
+    "fastapi",
+    "uvicorn",
+    "pydantic"
+]
+
+# Define optional dependencies
+extras_require = {
+    # Server dependencies are included in the base requirements
+    # but also defined here for flexibility
+    "server": server_requirements,
+
+    # LangChain integration
+    "langchain": [
+        "langchain-core"
+    ],
+
+    # If we want to enable the MLX-LM model support in the FastAPI server.
+    "mlx-lm": [
+        "mlx-lm>=0.24.0"
+    ],
+
+    # Development dependencies
+    "dev": [
+        "pytest>=7.0.0",
+        "pytest-asyncio>=0.20.0",
+        "httpx>=0.24.0"
+    ]
+}
+
+# Add "all" option to include all extra dependencies
+extras_require["all"] = []
+for group_name, deps in extras_require.items():
+    if group_name != "all":  # Avoid recursion
+        extras_require["all"].extend(deps)
 
 setup(
     name="gbx-lm",
@@ -16,12 +62,24 @@ setup(
     description="GBA Model Toolkit for MLX",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
-    readme="README.md",
     author_email="team@greenbit.ai",
     author="GreenBitAI and MLX Contributors",
     url="https://github.com/GreenBitAI/gbx-lm",
     license="Apache-2.0",
-    install_requires=requirements,
+    install_requires=core_requirements + server_requirements,
+    extras_require=extras_require,
     packages=find_packages(where=".", exclude=["tests", "tests.*", "examples", "examples.*"]),
     python_requires=">=3.9",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Developers",
+        "Intended Audience :: Science/Research",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    ],
+    keywords="mlx, apple, large language models, llm, language models",
 )

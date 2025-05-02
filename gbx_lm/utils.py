@@ -44,7 +44,7 @@ from .models import cache
 from .tokenizer_utils import TokenizerWrapper, load_tokenizer
 from .tuner.utils import load_adapters
 
-from .models import qllama, qmixtral, qqwen2, qphi3, qdeepseek_v3
+from .models import qllama, qmixtral, qqwen2, qphi3, qdeepseek_v3, qqwen3, qqwen3_moe
 from .models.quantized_linear_gba import QuantizedLinear
 import re
 
@@ -55,7 +55,9 @@ MODEL_MAPPING = {
     "mixtral": qmixtral,
     "qwen2": qqwen2,
     "phi3": qphi3,
-    "deepseek_v3": qdeepseek_v3
+    "deepseek_v3": qdeepseek_v3,
+    "qwen3": qqwen3,
+    "qwen3_moe": qqwen3_moe
 }
 
 MAX_FILE_SIZE_GB = 5
@@ -1119,3 +1121,28 @@ def save_config(
     # write the updated config to the config_path (if provided)
     with open(config_path, "w") as fid:
         json.dump(config, fid, indent=4)
+
+def common_prefix_len(list1, list2):
+    """
+    Calculates the length of the common prefix of two lists.
+
+    Args:
+        list1: The first list of strings.
+        list2: The second list of strings.
+
+    Returns:
+        The length of the common prefix. Returns 0 if lists are empty
+        or do not match at the first element.
+    """
+    # Determine the maximum possible length of the common prefix
+    min_len = min(len(list1), len(list2))
+
+    # Iterate up to the length of the shorter list
+    for i in range(min_len):
+        if list1[i] != list2[i]:
+            # Mismatch found, the common prefix length is the current index
+            return i
+
+    # No mismatch found within the bounds of the shorter list,
+    # so the common prefix length is the length of the shorter list.
+    return min_len
