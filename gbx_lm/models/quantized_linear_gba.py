@@ -297,7 +297,7 @@ class QuantizedLinear(Module):
     def post_processing_and_release(
         cls,
         model: Module,
-        gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear, QuantizedSwitchLinear),
+        gba_linear_class_predicate=lambda m: isinstance(m, (QuantizedLinear, QuantizedSwitchLinear)),
     ):
         """
         Changes all zeros to -zeros.
