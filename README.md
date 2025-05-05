@@ -155,6 +155,14 @@ python -m gbx_lm.gba2mlx --hf-path <input file path or a Hugging Face repo> --ml
 python -m gbx_lm.gba2mlx --hf-path GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0 --mlx-path Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx/ --hf-token <your huggingface token> --upload-repo GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx
 ```
 
+### Evaluating Models
+To evaluate a model, run:
+```bash
+gbx_lm.evaluate \
+    --model gbx_model \
+    --tasks winogrande boolq arc_challenge arc_easy hellaswag openbookqa piqa social_iqa   
+```
+
 ## Requirements
 - Python >= 3.9
 - See `setup.py` for a complete list of dependencies
