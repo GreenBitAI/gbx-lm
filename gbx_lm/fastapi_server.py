@@ -109,6 +109,23 @@ def get_model_key(request_model: str) -> str:
     # If no match is found, raise exception
     raise ValueError(f"Error: Unsupported model: {request_model}")
 
+
+def is_qwen3_model(model_name: str) -> bool:
+    """
+    Check if the model is a Qwen3 model which supports enable_thinking parameter.
+
+    Args:
+        model_name: The model name to check
+
+    Returns:
+        bool: True if it's a Qwen3 model, False otherwise
+    """
+    model_name_lower = model_name.lower()
+    return any([
+        "qwen3-" in model_name_lower,
+        "qwen-3-" in model_name_lower
+    ])
+
 def parse_args():
     parser = argparse.ArgumentParser(description="MLX FastAPI Server.")
     # Server configuration
@@ -318,10 +335,21 @@ def create_app(args):
                 async with model_lock:
                     model, tokenizer = model_provider.load(model_path)
 
-                    prompt = tokenizer.apply_chat_template(
-                        request.messages,
-                        add_generation_prompt=True,
-                    )
+                    prompt = None
+                    if is_qwen3_model(model_path):
+                        # For Qwen3 models, pass the enable_thinking parameter if provided
+                        enable_thinking = request.enable_thinking
+                        prompt = tokenizer.apply_chat_template(
+                            request.messages,
+                            add_generation_prompt=True,
+                            enable_thinking=enable_thinking
+                        )
+                    else:
+                        # For other models, use the original code
+                        prompt = tokenizer.apply_chat_template(
+                            request.messages,
+                            add_generation_prompt=True,
+                        )
 
                     if not isinstance(prompt, mx.array):
                         if isinstance(prompt, str):
@@ -409,6 +437,7 @@ class ChatCompletionRequest(BaseModel):
     repetition_context_size: int = 20
     with_hidden_states: bool = False
     remote_score: bool = True
+    enable_thinking: Optional[bool] = None  # Qwen3 Model only feature
 
 
 async def stream_completion(prompt, request, model, tokenizer):

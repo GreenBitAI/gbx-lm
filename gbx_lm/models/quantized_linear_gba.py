@@ -177,10 +177,17 @@ class QuantizedLinear(Module):
         )
 
     def __call__(self, x):
-        # mul channel_scale
+        # ============================================================== #
+        # NOTE: The following two auxiliary parameters channel_scale and #
+        # q_perm will be completely removed in future low-bit models.The #
+        # corresponding code support is currently planned to be removed  #
+        # in gbx-lm version 0.5.0. Older models can only be run with     #
+        # gbx-lm <= 0.4.0                                                #
+        #=============================================================== #
+        ## mul channel_scale
         #if hasattr(self, 'channel_scale'):
         #     x = mx.multiply(x, self.channel_scale)
-        # array rearrangement if necessary
+        ## array rearrangement if necessary
         #if hasattr(self, 'q_perm'):
         #     x = mx.take_along_axis(x, self.q_perm, axis=-1)
 
@@ -196,7 +203,7 @@ class QuantizedLinear(Module):
         )
         if "bias" in self:
             x = x + self.bias
-        #print(x)
+
         return x
 
 
