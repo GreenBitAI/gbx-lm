@@ -490,7 +490,7 @@ class Model(nn.Module):
                             for e in range(self.args.n_routed_experts)
                         ]
                         weights[f"{prefix}.mlp.switch_mlp.{m}.{k}"] = mx.stack(to_join)
-
+        
                 if f"{prefix}.mlp.experts.0.{m}.channel_scale" in weights and f"{prefix}.mlp.experts.0.{m}.q_perm" in weights:
                     for e in range(self.args.n_routed_experts):
                         weights.pop(f"{prefix}.mlp.experts.{e}.{m}.channel_scale")
