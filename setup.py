@@ -47,7 +47,8 @@ extras_require = {
         "pytest>=7.0.0",
         "pytest-asyncio>=0.20.0",
         "httpx>=0.24.0"
-    ]
+    ],
+    "evaluate": ["lm-eval", "tqdm"]
 }
 
 # Add "all" option to include all extra dependencies
@@ -97,4 +98,13 @@ setup(
         "Topic :: Scientific/Engineering :: Artificial Intelligence",
     ],
     keywords="mlx, apple, large language models, llm, language models",
+    entry_points={
+        "console_scripts": [
+            "gbx_lm.chat = gbx_lm.chat:main",
+            "gbx_lm.evaluate = gbx_lm.evaluate:main",
+            "gbx_lm.generate = gbx_lm.generate:main",
+            "gbx_lm.lora = gbx_lm.lora:main",
+            "gbx_lm.manage = gbx_lm.manage:main"
+        ]
+    },
 )
