@@ -56,6 +56,16 @@ for group_name, deps in extras_require.items():
     if group_name != "all":  # Avoid recursion
         extras_require["all"].extend(deps)
 
+# Define the packages to include
+packages = find_packages(include=["gbx_lm", "gbx_lm.*"])
+
+# Define directories and files that should be excluded from MANIFEST.in
+# NOTE: This does not affect wheel builds, but does affect sdist builds
+# Use the package_data parameter to determine which files will be included in the package
+package_data = {
+    "": ["*.txt", "*.md", "*.json"],
+}
+
 setup(
     name="gbx-lm",
     version=__version__,
@@ -68,7 +78,12 @@ setup(
     license="Apache-2.0",
     install_requires=core_requirements + server_requirements,
     extras_require=extras_require,
-    packages=find_packages(where=".", exclude=["tests", "tests.*", "examples", "examples.*"]),
+    packages=packages,
+    package_data=package_data,
+    # Explicitly specify which files should be included in the source distribution
+    include_package_data=False,
+    # Explicitly exclude examples and tests directories
+    exclude_package_data={"": ["examples/*", "tests/*"]},
     python_requires=">=3.9",
     classifiers=[
         "Development Status :: 4 - Beta",

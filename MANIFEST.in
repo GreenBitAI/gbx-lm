@@ -1,0 +1,13 @@
+# Define include files and extensions
+include LICENSE
+include README.md
+include requirements.txt
+recursive-include gbx_lm *.py
+recursive-include gbx_lm *.json
+
+# Explicitly exclude examples and tests directories
+prune examples
+prune tests
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .DS_Store
