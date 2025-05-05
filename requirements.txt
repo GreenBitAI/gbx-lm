@@ -1,6 +1,5 @@
 # Core machine learning framework
 mlx>=0.25.0
-mlx-lm>=0.24.0 # (optional if use mlx model)
 numpy
 
 # Models and tokenizers
@@ -22,3 +21,6 @@ pyyaml # For configuration files
 
 # Langchain related
 langchain-core  # in chat_gbx.py and gbx_pipeline.py
+
+# Optional if use mlx-community model
+mlx-lm>=0.24.0
