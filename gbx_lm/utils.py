@@ -835,7 +835,9 @@ def load_model(
             if 'qweight' in k:
                 weights[k] = v.transpose().astype(mx.uint32)
             if not use_double_quantization and ('scales' in k or 'zeros' in k):
-                weights[k] = v.transpose()
+                weights[k] = v.transpose().astype(mx.bfloat16)
+            if "norm.weight" in k or "bias" in k or "gate.weight" in k or "lm_head" in k or "embed_tokens" in k or "channel_scale" in k:
+                weights[k] = v.astype(mx.bfloat16)
     ## ===================================================================##
 
     model_class, model_args_class = get_model_classes(config=config)
