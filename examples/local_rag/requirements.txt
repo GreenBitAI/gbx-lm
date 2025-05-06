@@ -1,6 +1,0 @@
-langchain-core
-langchain-community
-langchain-chroma
-langchain-text-splitters
-beautifulsoup4
-pydantic

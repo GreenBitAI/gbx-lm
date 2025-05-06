@@ -1,11 +1,8 @@
-import math
-
 import mlx.core as mx
 from mlx.nn.layers.base import Module
 from mlx.utils import tree_flatten, tree_map
 from .switch_layers import QuantizedSwitchLinear
-import torch
-import numpy as np
+
 
 class QuantizedLinear(Module):
     """Applies an affine transformation to the input using a quantized weight matrix.
@@ -53,11 +50,11 @@ class QuantizedLinear(Module):
         # And bias if needed
         if bias:
             self.bias = mx.zeros((self.output_dims,))
-        self.init_params(False, False)
+        self.init_params(False)
         # Freeze this model's parameters
         self.freeze()
 
-    def init_params(self, use_double_quantization: bool, use_q_perm: bool):
+    def init_params(self, use_q_perm: bool=False):
         shape_w = (self.output_dims, self.input_dims // 32 * self.bits)
         shape_sz = (self.output_dims, self.input_dims // self.group_size)
 
@@ -74,79 +71,14 @@ class QuantizedLinear(Module):
         if use_q_perm:
             self.q_perm = mx.zeros(shape=(1, 1, self.input_dims), dtype=mx.int16)
 
-        if use_double_quantization:
-            shape_qstatistic = (
-                math.ceil(self.input_dims / self.group_size),
-                math.ceil(self.output_dims / self.double_group_size),
-                self.double_group_size
-            )
-            shape_dsz = (
-                math.ceil(self.input_dims / self.group_size),
-                math.ceil(self.output_dims / self.double_group_size),
-                1
-            )
-            # parameters only for conversion
-            self.qstatistic = mx.zeros(
-                shape=shape_qstatistic,
-                dtype=mx.uint8
-            )
-            self.qzeros_zeros = mx.zeros(
-                shape=shape_dsz,
-                dtype=mx.float16
-            )
-            self.qzeros_scales = mx.ones(
-                shape=shape_dsz,
-                dtype=mx.float16
-            )
-            self.qscales_zeros = mx.zeros(
-                shape=shape_dsz,
-                dtype=mx.float16
-            )
-            self.qscales_scales = mx.ones(
-                shape=shape_dsz,
-                dtype=mx.float16
-            )
-        else:
-            self.scales = mx.ones(
-                shape=shape_sz,
-                dtype=mx.float16
-            )
-            self.zeros = mx.zeros(
-                shape=shape_sz,
-                dtype=mx.float16
-            )
-
-    def create_scales_zeros(self):
-        # cannot directly convert to torch, use numpy as intermediate buffer
-        qstatistic_np = np.array(self.qstatistic)
-        qzeros_zeros_np = np.array(self.qzeros_zeros)
-        qzeros_scales_np = np.array(self.qzeros_scales)
-        qscales_zeros_np = np.array(self.qscales_zeros)
-        qscales_scales_np = np.array(self.qscales_scales)
-
-        qstatistic_torch = torch.from_numpy(qstatistic_np)
-        qzeros_zeros_torch = torch.from_numpy(qzeros_zeros_np)
-        qzeros_scales_torch = torch.from_numpy(qzeros_scales_np)
-        qscales_zeros_torch = torch.from_numpy(qscales_zeros_np)
-        qscales_scales_torch = torch.from_numpy(qscales_scales_np)
-
-        buffer_shape = (math.ceil(self.input_dims / self.group_size), self.output_dims)
-        qscales_torch = (qstatistic_torch & 0xF0) >> 4
-        qzeros_torch = qstatistic_torch & 0x0F
-
-        zeros = ((qzeros_torch.to(torch.float16) - qzeros_zeros_torch) * qzeros_scales_torch).view(buffer_shape)
-        scales = ((qscales_torch.to(torch.float16) - qscales_zeros_torch) * qscales_scales_torch).view(buffer_shape)
-
-        # get mx array and adapt the layout according to qweight.shape
-        self.scales = mx.array(scales.numpy()).transpose()
-        self.zeros = mx.array(zeros.numpy()).transpose()
-
-        # after creating fp16 scales and zeros, we release qscale* and qzero* parameters
-        self['qstatistic'] = None
-        self['qzeros_zeros'] = None
-        self['qzeros_scales'] = None
-        self['qscales_zeros'] = None
-        self['qscales_scales'] = None
+        self.scales = mx.ones(
+            shape=shape_sz,
+            dtype=mx.float16
+        )
+        self.zeros = mx.zeros(
+            shape=shape_sz,
+            dtype=mx.float16
+        )
 
     def set_bias_and_weight(self):
         # There is a small error in the mlx document. Although the document indicates
@@ -214,7 +146,6 @@ class QuantizedLinear(Module):
         group_size: int = 64,
         bits: int = 4,
         strategy: dict = None,
-        use_double_quantization: bool = False,
         use_q_perm: bool = False,
         gba_linear_class_predicate=lambda m: isinstance(m, QuantizedLinear),
     ):
@@ -225,7 +156,7 @@ class QuantizedLinear(Module):
             if gba_linear_class_predicate(m):
                 m.group_size = group_size
                 m.bits = bits
-                m.init_params(use_double_quantization, use_q_perm)
+                m.init_params(use_q_perm)
             return m
 
         def _assign_attributs(model: Module):
@@ -270,10 +201,9 @@ class QuantizedLinear(Module):
                     child.bits = strg["bits"][0]
                     child.group_size = strg["group_size"][str(child.bits)]
                     assert child.group_size in [32, 64, 128], f"The group size value ({child.group_size}) must be 32, 64 or 128."
-                    # print(f'[DEBUG]: {name}: Updated QuantizedLinear bits to {child.bits}, group_size to {child.group_size}')
 
                     # re-init params
-                    child.init_params(use_double_quantization, use_q_perm)
+                    child.init_params(use_q_perm)
 
         if strategy is None:
             leaves = model.leaf_modules()

@@ -10,13 +10,8 @@ from version import __version__
 # Define core dependencies
 core_requirements = [
     "mlx>=0.25.0",
-    "numpy",
     "transformers[sentencepiece]>=4.39.3",  # Include sentencepiece for tokenizer support
-    "huggingface_hub",
-    "torch>=2.0.0",
-    "protobuf",
-    "pyyaml",
-    "datasets"
+    "huggingface_hub"
 ]
 
 # FastAPI server related dependencies - included by default
@@ -29,26 +24,7 @@ server_requirements = [
 # Define optional dependencies
 extras_require = {
     # Server dependencies are included in the base requirements
-    # but also defined here for flexibility
     "server": server_requirements,
-
-    # LangChain integration
-    "langchain": [
-        "langchain-core"
-    ],
-
-    # If we want to enable the MLX-LM model support in the FastAPI server.
-    "mlx-lm": [
-        "mlx-lm>=0.24.0"
-    ],
-
-    # Development dependencies
-    "dev": [
-        "pytest>=7.0.0",
-        "pytest-asyncio>=0.20.0",
-        "httpx>=0.24.0"
-    ],
-    "evaluate": ["lm-eval", "tqdm"]
 }
 
 # Add "all" option to include all extra dependencies
@@ -101,10 +77,9 @@ setup(
     entry_points={
         "console_scripts": [
             "gbx_lm.chat = gbx_lm.chat:main",
-            "gbx_lm.evaluate = gbx_lm.evaluate:main",
             "gbx_lm.generate = gbx_lm.generate:main",
-            "gbx_lm.lora = gbx_lm.lora:main",
-            "gbx_lm.manage = gbx_lm.manage:main"
+            "gbx_lm.manage = gbx_lm.manage:main",
+            "gbx_lm.fastapi_server = gbx_lm.fastapi_server:main"
         ]
     },
 )
