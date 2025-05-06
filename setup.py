@@ -78,7 +78,6 @@ setup(
         "console_scripts": [
             "gbx_lm.chat = gbx_lm.chat:main",
             "gbx_lm.generate = gbx_lm.generate:main",
-            "gbx_lm.manage = gbx_lm.manage:main",
             "gbx_lm.fastapi_server = gbx_lm.fastapi_server:main"
         ]
     },
