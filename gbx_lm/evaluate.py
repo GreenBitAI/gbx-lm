@@ -10,7 +10,6 @@ import argparse
 import json
 import logging
 import os
-
 from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
@@ -23,25 +22,7 @@ from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
 from tqdm import tqdm
 
-# Detect and import the appropriate modules
-try:
-    # Try importing from your gbx-lm project first
-    from .models.base import create_causal_mask
-    from .models.cache import make_prompt_cache
-    from .utils import common_prefix_len, load, stream_generate
-
-    gbx_lm_modules = True
-except ImportError:
-    try:
-        # Try importing from mlx-lm
-        from .generate import stream_generate
-        from .models.base import create_causal_mask
-        from .models.cache import make_prompt_cache
-        from .utils import common_prefix_len, load
-
-        gbx_lm_modules = False
-    except ImportError:
-        raise ImportError("Unable to import a required module. Make sure the gbx-lm or mlx-lm package is installed.")
+from .utils import common_prefix_len
 
 
 def _rstrip_until(s, untils):
@@ -94,23 +75,32 @@ class MLXLM(LM):
             batch_size: int = 16,
             max_tokens: Optional[int] = None,
             use_chat_template: Optional[bool] = None,
-            enable_thinking: Optional[bool] = False,
     ) -> None:
         super().__init__()
         self._batch_size = batch_size
 
         self.model_type = detect_model_type(path_or_hf_repo)
-        logging.info(f"Detected model type: {self.model_type}")
+        print(f"Detected model type: {self.model_type}")
+
+        if self.model_type == "gbx":
+            from .utils import load
+        elif self.model_type == "mlx":
+            from mlx_lm.utils import load
 
         self._model, self.tokenizer = load(path_or_hf_repo)
         self._max_tokens = max_tokens or self.tokenizer.model_max_length
         self.use_chat_template = use_chat_template
-        self.enable_thinking = enable_thinking
-
         if use_chat_template is None:
             self.use_chat_template = self.tokenizer.chat_template is not None
 
     def _score_fn(self, inputs, step_size: int = 64):
+        if self.model_type == "gbx":
+            from .models.base import create_causal_mask
+            from .models.cache import make_prompt_cache
+        elif self.model_type == "mlx":
+            from mlx_lm.models.base import create_causal_mask
+            from mlx_lm.models.cache import make_prompt_cache
+
         inputs, lengths = _pad_inputs(inputs)
         inputs, targets = inputs[..., :-1], inputs[..., 1:]
 
@@ -170,36 +160,6 @@ class MLXLM(LM):
         return all_scores, all_is_greedy
 
     def _tokenize(self, texts):
-        """
-        Tokenize text based on whether chat templates are used
-
-        Consider enable_thinking parameter, if supported
-        """
-        # Qwen3 model special processing: apply enable_thinking parameter
-        if self.enable_thinking is not None and hasattr(self.tokenizer, 'apply_chat_template'):
-            # Check if apply_chat_template of the tokenizer supports enable_thinking
-            if 'enable_thinking' in self.tokenizer.apply_chat_template.__code__.co_varnames:
-                processed_texts = []
-                for text in texts:
-                    # Try to parse it as a chat message
-                    try:
-                        if text.startswith('[') or text.startswith('{'):
-                            import json
-                            messages = json.loads(text)
-                            if isinstance(messages, list) and all(isinstance(m, dict) for m in messages):
-                                # Apply chat template using enable_thinking parameter
-                                text = self.tokenizer.apply_chat_template(
-                                    messages,
-                                    tokenize=False,
-                                    add_generation_prompt=True,
-                                    enable_thinking=self.enable_thinking
-                                )
-                    except (json.JSONDecodeError, TypeError, AttributeError):
-                        # Non-chat message format, keep it as is
-                        pass
-                    processed_texts.append(text)
-                texts = processed_texts
-
         return [
             tuple(
                 self.tokenizer.encode(t, add_special_tokens=not self.use_chat_template)
@@ -360,6 +320,11 @@ class MLXLM(LM):
             continuation: str
                 The generated continuation.
         """
+        if self.model_type == "gbx":
+            from .utils import stream_generate
+        elif self.model_type == "mlx":
+            from mlx_lm.generate import stream_generate
+
         logging.info("Generating continuation for %d sequences." % len(requests))
         contexts, options = zip(*[req.args for req in requests])
         # contrary to the doc the second element of the tuple contains
@@ -368,28 +333,6 @@ class MLXLM(LM):
 
         for context, opt in tqdm(zip(contexts, options), total=len(contexts)):
             until = opt["until"]
-
-            # Handling chat templates and thinking patterns
-            if self.use_chat_template and self.enable_thinking is not None:
-                # Try to parse it as a chat message
-                try:
-                    if context.startswith('[') or context.startswith('{'):
-                        import json
-                        messages = json.loads(context)
-                        if isinstance(messages, list) and all(isinstance(m, dict) for m in messages):
-                            # Check if the tokenizer supports enable_thinking
-                            if hasattr(self.tokenizer,
-                                       'apply_chat_template') and 'enable_thinking' in self.tokenizer.apply_chat_template.__code__.co_varnames:
-                                context = self.tokenizer.apply_chat_template(
-                                    messages,
-                                    tokenize=False,
-                                    add_generation_prompt=True,
-                                    enable_thinking=self.enable_thinking
-                                )
-                except (json.JSONDecodeError, TypeError, AttributeError):
-                    # Non-chat message format, keep it as is
-                    pass
-
             context = self.tokenizer.encode(
                 context, add_special_tokens=not self.use_chat_template
             )
@@ -408,22 +351,6 @@ class MLXLM(LM):
                     break
             else:
                 completions.append(text)
-
-            # Processing thoughts (if enabled)
-            if self.enable_thinking and '</think>' in text:
-                try:
-                    # Find thoughts
-                    end_think_index = text.rfind('</think>')
-                    if end_think_index >= 0:
-                        thinking_content = text[:end_think_index].strip()
-                        content = text[end_think_index + len('</think>'):].strip()
-                        # You can record or process your thoughts
-                        logging.info(f"Thinking content detected and processed")
-                        # Return only non-thinking content
-                        completions[-1] = content
-                except Exception as e:
-                    logging.error(f"Error processing thinking content: {e}")
-
         return completions
 
 
@@ -465,13 +392,6 @@ def main():
              "otherwise `False`.",
         default=None,
     )
-    # enable_thinking
-    parser.add_argument(
-        "--enable-thinking",
-        action=argparse.BooleanOptionalAction,
-        help="Specifies whether to enable the thinking mode for models that support it (e.g., Qwen3).",
-        default=False,
-    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -487,7 +407,6 @@ def main():
         batch_size=args.batch_size,
         max_tokens=args.max_tokens,
         use_chat_template=args.apply_chat_template,
-        enable_thinking=args.enable_thinking,
     )
     results = lm_eval.simple_evaluate(
         model=lm,
