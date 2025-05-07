@@ -3,12 +3,14 @@
 
 """
 Adapted from a PyTorch implementation by David Grangier
+Integrated version supporting both GreenBitAI and mlx-community models
 """
 
 import argparse
 import json
 import logging
 import os
+
 from importlib.metadata import version
 from pathlib import Path
 from typing import Optional
@@ -21,9 +23,25 @@ from lm_eval.api.model import LM
 from lm_eval.api.registry import register_model
 from tqdm import tqdm
 
-from .models.base import create_causal_mask
-from .models.cache import make_prompt_cache
-from .utils import common_prefix_len, load, stream_generate
+# Detect and import the appropriate modules
+try:
+    # Try importing from your gbx-lm project first
+    from .models.base import create_causal_mask
+    from .models.cache import make_prompt_cache
+    from .utils import common_prefix_len, load, stream_generate
+
+    gbx_lm_modules = True
+except ImportError:
+    try:
+        # Try importing from mlx-lm
+        from .generate import stream_generate
+        from .models.base import create_causal_mask
+        from .models.cache import make_prompt_cache
+        from .utils import common_prefix_len, load
+
+        gbx_lm_modules = False
+    except ImportError:
+        raise ImportError("Unable to import a required module. Make sure the gbx-lm or mlx-lm package is installed.")
 
 
 def _rstrip_until(s, untils):
@@ -44,24 +62,51 @@ def _pad_inputs(inputs):
     return mx.array(padded), mx.array(lengths)
 
 
+def detect_model_type(path_or_hf_repo: str) -> str:
+    """
+    Detect the type of model to determine which loading and processing flow to use
+
+    Args:
+        path_or_hf_repo: Model path or HF repository name
+
+    Returns:
+        str: 'gbx' refers to the GreenBitAI model, 'mlx' refers to the mlx-community model
+    """
+    # Identify model types based on naming conventions
+    if "GreenBitAI" in path_or_hf_repo or "gbx" in path_or_hf_repo.lower():
+        return "gbx"
+    elif "mlx-community" in path_or_hf_repo:
+        return "mlx"
+    else:
+        # If you are unsure, use a more general loading method by default
+        logging.warning(f"Unable to determine the type of model {path_or_hf_repo}, using default load flow")
+        return "mlx"
+
+
 @register_model("mlxlm")
 class MLXLM(LM):
-
     tokenizer_name = lm_eval.models.huggingface.HFLM.tokenizer_name
     apply_chat_template = lm_eval.models.huggingface.HFLM.apply_chat_template
 
     def __init__(
-        self,
-        path_or_hf_repo: str,
-        batch_size: int = 16,
-        max_tokens: Optional[int] = None,
-        use_chat_template: Optional[bool] = None,
+            self,
+            path_or_hf_repo: str,
+            batch_size: int = 16,
+            max_tokens: Optional[int] = None,
+            use_chat_template: Optional[bool] = None,
+            enable_thinking: Optional[bool] = False,
     ) -> None:
         super().__init__()
         self._batch_size = batch_size
+
+        self.model_type = detect_model_type(path_or_hf_repo)
+        logging.info(f"Detected model type: {self.model_type}")
+
         self._model, self.tokenizer = load(path_or_hf_repo)
         self._max_tokens = max_tokens or self.tokenizer.model_max_length
         self.use_chat_template = use_chat_template
+        self.enable_thinking = enable_thinking
+
         if use_chat_template is None:
             self.use_chat_template = self.tokenizer.chat_template is not None
 
@@ -73,7 +118,7 @@ class MLXLM(LM):
 
         scores, is_greedy = [], []
         for i in range(0, inputs.shape[1], step_size):
-            inp = inputs[:, i : i + step_size]
+            inp = inputs[:, i: i + step_size]
             T = inp.shape[1]
 
             offset = cache[0].offset
@@ -83,9 +128,9 @@ class MLXLM(LM):
             log_probs = nn.log_softmax(logits.astype(mx.float32))
 
             score = mx.take_along_axis(
-                log_probs, targets[:, i : i + step_size, mx.newaxis], axis=-1
+                log_probs, targets[:, i: i + step_size, mx.newaxis], axis=-1
             )[..., 0]
-            ig = targets[:, i : i + step_size] == mx.argmax(logits, axis=-1)
+            ig = targets[:, i: i + step_size] == mx.argmax(logits, axis=-1)
             ig = mx.where(mx.arange(T) + offset < lengths[:, None], ig, False)
 
             mx.eval(score, ig)
@@ -103,12 +148,12 @@ class MLXLM(LM):
         all_scores = mx.zeros(len(texts))
         all_is_greedy = mx.zeros(len(texts), dtype=mx.bool_)
         for i in tqdm(range(0, len(texts), self._batch_size)):
-            batch = texts[i : i + self._batch_size]
+            batch = texts[i: i + self._batch_size]
             scores, lengths, is_greedy = self._score_fn(batch)
 
             ind = np.arange(scores.shape[-1])
             if score_spans is not None:
-                spans = score_spans[i : i + self._batch_size]
+                spans = score_spans[i: i + self._batch_size]
                 lengths = [end - start for start, end in spans]
                 masks = mx.array(
                     np.array([(ind >= start) & (ind < end) for start, end in spans])
@@ -119,12 +164,42 @@ class MLXLM(LM):
             scores = (masks * scores).sum(axis=-1)
             is_greedy = (masks * is_greedy).sum(axis=-1)
 
-            all_scores[i : i + self._batch_size] = scores
-            all_is_greedy[i : i + self._batch_size] = is_greedy == lengths
+            all_scores[i: i + self._batch_size] = scores
+            all_is_greedy[i: i + self._batch_size] = is_greedy == lengths
 
         return all_scores, all_is_greedy
 
     def _tokenize(self, texts):
+        """
+        Tokenize text based on whether chat templates are used
+
+        Consider enable_thinking parameter, if supported
+        """
+        # Qwen3 model special processing: apply enable_thinking parameter
+        if self.enable_thinking is not None and hasattr(self.tokenizer, 'apply_chat_template'):
+            # Check if apply_chat_template of the tokenizer supports enable_thinking
+            if 'enable_thinking' in self.tokenizer.apply_chat_template.__code__.co_varnames:
+                processed_texts = []
+                for text in texts:
+                    # Try to parse it as a chat message
+                    try:
+                        if text.startswith('[') or text.startswith('{'):
+                            import json
+                            messages = json.loads(text)
+                            if isinstance(messages, list) and all(isinstance(m, dict) for m in messages):
+                                # Apply chat template using enable_thinking parameter
+                                text = self.tokenizer.apply_chat_template(
+                                    messages,
+                                    tokenize=False,
+                                    add_generation_prompt=True,
+                                    enable_thinking=self.enable_thinking
+                                )
+                    except (json.JSONDecodeError, TypeError, AttributeError):
+                        # Non-chat message format, keep it as is
+                        pass
+                    processed_texts.append(text)
+                texts = processed_texts
+
         return [
             tuple(
                 self.tokenizer.encode(t, add_special_tokens=not self.use_chat_template)
@@ -204,8 +279,8 @@ class MLXLM(LM):
         group = mx.distributed.init()
 
         # split strided so we have approximately the same lengths on each node
-        shortened = shortened[group.rank() :: group.size()]
-        completion_spans = completion_spans[group.rank() :: group.size()]
+        shortened = shortened[group.rank():: group.size()]
+        completion_spans = completion_spans[group.rank():: group.size()]
 
         # model scoring, returns num_requests x (logp, is_greedy, length).
         scores, is_greedy = self._loglikelihood(
@@ -293,6 +368,28 @@ class MLXLM(LM):
 
         for context, opt in tqdm(zip(contexts, options), total=len(contexts)):
             until = opt["until"]
+
+            # Handling chat templates and thinking patterns
+            if self.use_chat_template and self.enable_thinking is not None:
+                # Try to parse it as a chat message
+                try:
+                    if context.startswith('[') or context.startswith('{'):
+                        import json
+                        messages = json.loads(context)
+                        if isinstance(messages, list) and all(isinstance(m, dict) for m in messages):
+                            # Check if the tokenizer supports enable_thinking
+                            if hasattr(self.tokenizer,
+                                       'apply_chat_template') and 'enable_thinking' in self.tokenizer.apply_chat_template.__code__.co_varnames:
+                                context = self.tokenizer.apply_chat_template(
+                                    messages,
+                                    tokenize=False,
+                                    add_generation_prompt=True,
+                                    enable_thinking=self.enable_thinking
+                                )
+                except (json.JSONDecodeError, TypeError, AttributeError):
+                    # Non-chat message format, keep it as is
+                    pass
+
             context = self.tokenizer.encode(
                 context, add_special_tokens=not self.use_chat_template
             )
@@ -302,7 +399,7 @@ class MLXLM(LM):
             )
             text = ""
             for response in stream_generate(
-                self._model, self.tokenizer, prompt=context, max_tokens=max_tokens
+                    self._model, self.tokenizer, prompt=context, max_tokens=max_tokens
             ):
                 text += response.text
                 if any(u in text for u in until):
@@ -311,6 +408,22 @@ class MLXLM(LM):
                     break
             else:
                 completions.append(text)
+
+            # Processing thoughts (if enabled)
+            if self.enable_thinking and '</think>' in text:
+                try:
+                    # Find thoughts
+                    end_think_index = text.rfind('</think>')
+                    if end_think_index >= 0:
+                        thinking_content = text[:end_think_index].strip()
+                        content = text[end_think_index + len('</think>'):].strip()
+                        # You can record or process your thoughts
+                        logging.info(f"Thinking content detected and processed")
+                        # Return only non-thinking content
+                        completions[-1] = content
+                except Exception as e:
+                    logging.error(f"Error processing thinking content: {e}")
+
         return completions
 
 
@@ -341,16 +454,23 @@ def main():
         "--fewshot-as-multiturn",
         action="store_true",
         help="Whether to provide the fewshot examples as a multiturn "
-        "conversation or a single user turn.",
+             "conversation or a single user turn.",
         default=False,
     )
     parser.add_argument(
         "--apply-chat-template",
         action=argparse.BooleanOptionalAction,
         help="Specifies whether to apply a chat template to the prompt. If "
-        "the model has a chat template, this defaults to `True`, "
-        "otherwise `False`.",
+             "the model has a chat template, this defaults to `True`, "
+             "otherwise `False`.",
         default=None,
+    )
+    # enable_thinking
+    parser.add_argument(
+        "--enable-thinking",
+        action=argparse.BooleanOptionalAction,
+        help="Specifies whether to enable the thinking mode for models that support it (e.g., Qwen3).",
+        default=False,
     )
     args = parser.parse_args()
 
@@ -367,6 +487,7 @@ def main():
         batch_size=args.batch_size,
         max_tokens=args.max_tokens,
         use_chat_template=args.apply_chat_template,
+        enable_thinking=args.enable_thinking,
     )
     results = lm_eval.simple_evaluate(
         model=lm,
