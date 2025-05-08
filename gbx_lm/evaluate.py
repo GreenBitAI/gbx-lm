@@ -161,7 +161,8 @@ class MLXLM(LM):
 
             offset = cache[0].offset
             mask = create_causal_mask(T, offset, lengths=lengths)
-
+            if self.is_qwen3:
+                mask = mask.astype(mx.bfloat16)
             logits = self._model(inp, cache=cache, mask=mask)
             log_probs = nn.log_softmax(logits.astype(mx.float32))
 
