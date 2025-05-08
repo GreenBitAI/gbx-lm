@@ -1,7 +1,7 @@
 import argparse
 
 from huggingface_hub import scan_cache_dir
-from transformers.commands.user import tabulate
+from tabulate import tabulate
 
 
 def ask_for_confirmation(message: str) -> bool:
