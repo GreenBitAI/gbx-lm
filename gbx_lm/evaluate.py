@@ -10,9 +10,10 @@ import argparse
 import json
 import logging
 import os
+import inspect
 from importlib.metadata import version
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 import lm_eval
 import mlx.core as mx
@@ -64,10 +65,22 @@ def detect_model_type(path_or_hf_repo: str) -> str:
         return "mlx"
 
 
+def is_qwen3_model(path_or_hf_repo: str) -> bool:
+    """
+    检测是否为支持 enable_thinking 参数的 Qwen3 模型
+
+    Args:
+        path_or_hf_repo: 模型路径或HF仓库名
+
+    Returns:
+        bool: 是否为 Qwen3 模型
+    """
+    return "qwen3-" in path_or_hf_repo.lower() or "qwen-3-" in path_or_hf_repo.lower()
+
+
 @register_model("mlxlm")
 class MLXLM(LM):
     tokenizer_name = lm_eval.models.huggingface.HFLM.tokenizer_name
-    apply_chat_template = lm_eval.models.huggingface.HFLM.apply_chat_template
 
     def __init__(
             self,
@@ -75,12 +88,18 @@ class MLXLM(LM):
             batch_size: int = 16,
             max_tokens: Optional[int] = None,
             use_chat_template: Optional[bool] = None,
+            enable_thinking: Optional[bool] = None,  # 添加 enable_thinking 参数
     ) -> None:
         super().__init__()
         self._batch_size = batch_size
 
         self.model_type = detect_model_type(path_or_hf_repo)
+        self.is_qwen3 = is_qwen3_model(path_or_hf_repo)
+        self.enable_thinking = enable_thinking  # 存储 enable_thinking 参数
+
         print(f"Detected model type: {self.model_type}")
+        if self.is_qwen3:
+            print(f"Qwen3 model detected, enable_thinking={self.enable_thinking}")
 
         if self.model_type == "gbx":
             from .utils import load
@@ -92,6 +111,35 @@ class MLXLM(LM):
         self.use_chat_template = use_chat_template
         if use_chat_template is None:
             self.use_chat_template = self.tokenizer.chat_template is not None
+
+    def apply_chat_template(self, chat_history: List[Dict[str, str]], add_generation_prompt=True) -> str:
+        """
+        重写父类的 apply_chat_template 方法，增加对 enable_thinking 参数的支持
+
+        Args:
+            chat_history: 聊天历史消息列表
+            add_generation_prompt: 是否添加生成提示
+
+        Returns:
+            str: 应用了模板的文本
+        """
+        # 检查是否为 Qwen3 模型并且支持 enable_thinking
+        if self.is_qwen3 and hasattr(self.tokenizer, 'apply_chat_template'):
+            result = self.tokenizer.apply_chat_template(
+                chat_history,
+                tokenize=False,
+                add_generation_prompt=add_generation_prompt,
+                enable_thinking=self.enable_thinking
+            )
+            return result
+
+        # 对于不支持 enable_thinking 的情况，使用默认方法
+        result = self.tokenizer.apply_chat_template(
+            chat_history,
+            tokenize=False,
+            add_generation_prompt=add_generation_prompt
+        )
+        return result
 
     def _score_fn(self, inputs, step_size: int = 64):
         if self.model_type == "gbx":
@@ -160,14 +208,22 @@ class MLXLM(LM):
         return all_scores, all_is_greedy
 
     def _tokenize(self, texts):
+        """
+        根据是否使用聊天模板对文本进行标记化
+        """
+        # 判断是否有需要特殊处理的JSON格式聊天消息
+        processed_texts = []
+        for text in texts:
+            processed_texts.append(text)
+
         return [
             tuple(
                 self.tokenizer.encode(t, add_special_tokens=not self.use_chat_template)
             )
-            for t in texts
+            for t in processed_texts
         ]
 
-    def loglikelihood(self, requests) -> list[tuple[float, bool]]:
+    def loglikelihood(self, requests) -> List[tuple[float, bool]]:
         """Compute log-likelihood of generating a continuation from a context.
         Downstream tasks should attempt to use loglikelihood instead of other
         LM calls whenever possible.
@@ -267,7 +323,7 @@ class MLXLM(LM):
         results = [results[inv_sort[i]] for i in range(len(inv_sort))]
         return results
 
-    def loglikelihood_rolling(self, requests) -> list[float]:
+    def loglikelihood_rolling(self, requests) -> List[float]:
         """Compute full log-likelihood of a string, with no truncation, for perplexity computation
         - We will use the full max context length of the model.
         - For inputs that exceed the max context length, we divide the tokenized string into chunks of up to
@@ -306,7 +362,34 @@ class MLXLM(LM):
         scores, _ = self._loglikelihood(inputs)
         return scores.tolist()
 
-    def generate_until(self, requests) -> list[str]:
+    def _process_thinking_output(self, text: str) -> str:
+        """
+        处理带有思考内容的输出，提取出非思考部分
+
+        Args:
+            text: 生成的文本
+
+        Returns:
+            str: 处理后的文本
+        """
+        if self.enable_thinking:
+            # 保留思考内容，打印完整输出
+            return text
+        else:
+            # 移除思考内容
+            try:
+                end_think_index = text.rfind('</think>')
+                if end_think_index >= 0:
+                    thinking_content = text[:end_think_index].strip()
+                    content = text[end_think_index + len('</think>'):].strip()
+                    logging.info(f"Thinking content detected and processed.")
+                    return content
+            except Exception as e:
+                logging.error(f"Error processing thinking content: {e}")
+
+        return text
+
+    def generate_until(self, requests) -> List[str]:
         """Generate greedily until a stopping sequence
         :param requests: list[Instance]
             A list of Instance objects with property `args` which returns a tuple (context, until).
@@ -333,24 +416,55 @@ class MLXLM(LM):
 
         for context, opt in tqdm(zip(contexts, options), total=len(contexts)):
             until = opt["until"]
-            context = self.tokenizer.encode(
+
+            # 检查是否为 JSON 格式聊天消息
+            if self.use_chat_template and self.is_qwen3:
+                try:
+                    # 尝试解析为 JSON 格式的聊天消息
+                    is_json_chat = False
+                    messages = None
+
+                    if context.startswith('[') and context.endswith(']'):
+                        messages = json.loads(context)
+                        is_json_chat = True
+                    elif context.startswith('{') and context.endswith('}'):
+                        message = json.loads(context)
+                        if isinstance(message, dict) and 'role' in message and 'content' in message:
+                            messages = [message]
+                            is_json_chat = True
+
+                    if is_json_chat and messages is not None:
+                        # 使用我们的 apply_chat_template 方法，该方法会处理 enable_thinking
+                        context = self.apply_chat_template(messages, add_generation_prompt=True)
+                except (json.JSONDecodeError, TypeError, AttributeError) as e:
+                    # 不是 JSON 格式聊天消息，继续使用原始方式
+                    pass
+
+            context_tokens = self.tokenizer.encode(
                 context, add_special_tokens=not self.use_chat_template
             )
             max_tokens = min(
                 opt.get("max_gen_tokens", self._max_tokens),
-                self.tokenizer.model_max_length - len(context),
+                self.tokenizer.model_max_length - len(context_tokens),
             )
             text = ""
             for response in stream_generate(
-                    self._model, self.tokenizer, prompt=context, max_tokens=max_tokens
+                    self._model, self.tokenizer, prompt=context_tokens, max_tokens=max_tokens
             ):
                 text += response.text
                 if any(u in text for u in until):
                     text = _rstrip_until(text, until)
+                    # 处理思考内容
+                    if self.is_qwen3 and '</think>' in text:
+                        text = self._process_thinking_output(text)
                     completions.append(text)
                     break
             else:
+                # 处理思考内容
+                if self.is_qwen3 and '</think>' in text:
+                    text = self._process_thinking_output(text)
                 completions.append(text)
+
         return completions
 
 
@@ -392,6 +506,15 @@ def main():
              "otherwise `False`.",
         default=None,
     )
+    # 添加 enable_thinking 参数
+    parser.add_argument(
+        "--enable-thinking",
+        action=argparse.BooleanOptionalAction,
+        help="Specifies whether to enable the thinking mode for Qwen3 models. "
+             "When enabled, thinking content will be included in the output. "
+             "When disabled, thinking content will be removed.",
+        default=None,
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -407,6 +530,7 @@ def main():
         batch_size=args.batch_size,
         max_tokens=args.max_tokens,
         use_chat_template=args.apply_chat_template,
+        enable_thinking=args.enable_thinking,  # 传递 enable_thinking 参数
     )
     results = lm_eval.simple_evaluate(
         model=lm,
