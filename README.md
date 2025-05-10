@@ -159,8 +159,11 @@ python -m gbx_lm.gba2mlx --hf-path GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-
 To evaluate a model, run:
 ```bash
 gbx_lm.evaluate \
-    --model gbx_model \
-    --tasks winogrande boolq arc_challenge arc_easy hellaswag openbookqa piqa social_iqa   
+    --model <gbx_mlx_model or mlx_community_model> \
+    --output-dir eval_output \
+    --tasks winogrande boolq arc_challenge arc_easy hellaswag openbookqa piqa social_iqa \
+    --apply-chat-template \
+    --no-enable-thinking   
 ```
 
 ## Requirements
