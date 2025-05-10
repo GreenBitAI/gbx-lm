@@ -173,5 +173,5 @@ gbx_lm.evaluate \
 ## License
 The original code was released under its respective license and copyrights, i.e.:
 
-- `generate.py`, `lora.py`, `*utils.py`, `tuner/*.py` and `models/*.py` etc. released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-examples](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm).
+- `generate.py`, `lora.py`, `*utils.py`, `tuner/*.py` and `models/*.py` etc. released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-lm](https://github.com/ml-explore/mlx-lm).
 - We release our changes and additions to these files under the [Apache 2.0 License](LICENSE).
