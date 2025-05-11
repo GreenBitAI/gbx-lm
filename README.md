@@ -159,8 +159,11 @@ python -m gbx_lm.gba2mlx --hf-path GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-
 To evaluate a model, run:
 ```bash
 gbx_lm.evaluate \
-    --model gbx_model \
-    --tasks winogrande boolq arc_challenge arc_easy hellaswag openbookqa piqa social_iqa   
+    --model <gbx_mlx_model or mlx_community_model> \
+    --output-dir eval_output \
+    --tasks winogrande boolq arc_challenge arc_easy hellaswag openbookqa piqa social_iqa \
+    --apply-chat-template \
+    --no-enable-thinking   
 ```
 
 ## Requirements
@@ -170,5 +173,5 @@ gbx_lm.evaluate \
 ## License
 The original code was released under its respective license and copyrights, i.e.:
 
-- `generate.py`, `lora.py`, `*utils.py`, `tuner/*.py` and `models/*.py` etc. released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-examples](https://github.com/ml-explore/mlx-examples/tree/main/llms/mlx_lm).
+- `generate.py`, `lora.py`, `*utils.py`, `tuner/*.py` and `models/*.py` etc. released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-lm](https://github.com/ml-explore/mlx-lm).
 - We release our changes and additions to these files under the [Apache 2.0 License](LICENSE).
