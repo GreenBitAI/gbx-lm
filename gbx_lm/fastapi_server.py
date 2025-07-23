@@ -40,7 +40,6 @@ LOG_DIR = PROJECT_ROOT / "logs"
 from .server_utils import (
     stopping_criteria,
     sequence_overlap,
-    get_model_endpoint_path
 )
 
 # Global configurations
@@ -299,85 +298,82 @@ def create_app(args):
     # Initialize model provider
     model_provider = ModelProvider(server_config.model_config)
 
-    # Helper function to create endpoints for a specific model
-    def create_model_endpoints(model_path: str):
-        completion_path = get_model_endpoint_path(model_path, "completions")
-        chat_completion_path = get_model_endpoint_path(model_path, "chat/completions")
+    def validate_and_get_model_path(model_name: str) -> str:
+        """Validate if the requested model is available and return its path."""
+        if model_name not in server_config.models_to_serve:
+            available_models = list(server_config.models_to_serve)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_name}' not found. Available models: {available_models}"
+            )
+        return model_name
 
-        @app.post(completion_path, response_model=Dict)
-        async def create_completion(request: CompletionRequest):
-            try:
-                # get model lock
-                model_lock = server_config.get_model_lock(model_path)
-
-                # Acquire lock asynchronously
-                async with model_lock:
-                    model, tokenizer = model_provider.load(model_path)
-                    prompt = mx.array(tokenizer.encode(request.prompt))
-
-                    if request.stream:
-                        return StreamingResponse(
-                            stream_completion(prompt, request, model, tokenizer),
-                            media_type="text/event-stream"
-                        )
-                    else:
-                        result = await generate_completion(prompt, request, model, tokenizer)
-                        return JSONResponse(result)
-            except Exception as e:
-                logger.error(f"Completion request failed: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e))
-
-        @app.post(chat_completion_path, response_model=Dict)
-        async def create_chat_completion(request: ChatCompletionRequest):
-            try:
-                model_lock = server_config.get_model_lock(model_path)
-
-                async with model_lock:
-                    model, tokenizer = model_provider.load(model_path)
-
-                    prompt = None
-                    if is_qwen3_model(model_path):
-                        # For Qwen3 models, pass the enable_thinking parameter if provided
-                        enable_thinking = request.enable_thinking
-                        prompt = tokenizer.apply_chat_template(
-                            request.messages,
-                            add_generation_prompt=True,
-                            enable_thinking=enable_thinking
-                        )
-                    else:
-                        # For other models, use the original code
-                        prompt = tokenizer.apply_chat_template(
-                            request.messages,
-                            add_generation_prompt=True,
-                        )
-
-                    if not isinstance(prompt, mx.array):
-                        if isinstance(prompt, str):
-                            add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
-                                tokenizer.bos_token
-                            )
-                            prompt = tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
-                        prompt = mx.array(prompt)
-
-                    if request.stream:
-                        return StreamingResponse(
-                            stream_chat_completion(prompt, request, model, tokenizer),
-                            media_type="text/event-stream"
-                        )
-                    else:
-                        result = await generate_chat_completion(prompt, request, model, tokenizer)
-                        return JSONResponse(result)
-            except Exception as e:
-                logger.error(f"Chat completion request failed: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e))
-
-    # Create endpoints for each model
-    for model_path in server_config.models_to_serve:
+    @app.post("/v1/completions", response_model=Dict)
+    async def create_completion(request: CompletionRequest):
         try:
-            create_model_endpoints(model_path)
+            # Verify and get the model path
+            model_path = validate_and_get_model_path(request.model)
+            model_lock = server_config.get_model_lock(model_path)
+
+            async with model_lock:
+                model, tokenizer = model_provider.load(model_path)
+                prompt = mx.array(tokenizer.encode(request.prompt))
+
+                if request.stream:
+                    return StreamingResponse(
+                        stream_completion(prompt, request, model, tokenizer),
+                        media_type="text/event-stream"
+                    )
+                else:
+                    result = await generate_completion(prompt, request, model, tokenizer)
+                    return JSONResponse(result)
         except Exception as e:
-            logger.error(f"Failed to create endpoints for model {model_path}: {str(e)}")
-            raise
+            logger.error(f"Completion request failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.post("/v1/chat/completions", response_model=Dict)
+    async def create_chat_completion(request: ChatCompletionRequest):
+        try:
+            # Verify and get the model path
+            model_path = validate_and_get_model_path(request.model)
+            model_lock = server_config.get_model_lock(model_path)
+
+            async with model_lock:
+                model, tokenizer = model_provider.load(model_path)
+
+                prompt = None
+                if is_qwen3_model(model_path):
+                    enable_thinking = request.enable_thinking
+                    prompt = tokenizer.apply_chat_template(
+                        request.messages,
+                        add_generation_prompt=True,
+                        enable_thinking=enable_thinking
+                    )
+                else:
+                    prompt = tokenizer.apply_chat_template(
+                        request.messages,
+                        add_generation_prompt=True,
+                    )
+
+                if not isinstance(prompt, mx.array):
+                    if isinstance(prompt, str):
+                        add_special_tokens = tokenizer.bos_token is None or not prompt.startswith(
+                            tokenizer.bos_token
+                        )
+                        prompt = tokenizer.encode(prompt, add_special_tokens=add_special_tokens)
+                    prompt = mx.array(prompt)
+
+                if request.stream:
+                    return StreamingResponse(
+                        stream_chat_completion(prompt, request, model, tokenizer),
+                        media_type="text/event-stream"
+                    )
+                else:
+                    result = await generate_chat_completion(prompt, request, model, tokenizer)
+                    return JSONResponse(result)
+        except Exception as e:
+            logger.error(f"Chat completion request failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     # Add root endpoint for API information
     @app.get("/")
@@ -388,15 +384,33 @@ def create_app(args):
                 "version": "1.0",
                 "models": list(server_config.models_to_serve),
                 "endpoints": [
-                    get_model_endpoint_path(model, "completions")
-                    for model in server_config.models_to_serve
-                ] + [
-                    get_model_endpoint_path(model, "chat/completions")
-                    for model in server_config.models_to_serve
+                    "/v1/completions",
+                    "/v1/chat/completions"
                 ]
             }
         except Exception as e:
             logger.error(f"Root endpoint request failed: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @app.get("/v1/models")
+    async def list_models():
+        """List available models in OpenAI API format."""
+        try:
+            models = []
+            for model_name in server_config.models_to_serve:
+                models.append({
+                    "id": model_name,
+                    "object": "model",
+                    "created": int(time.time()),
+                    "owned_by": "gbx-lm"
+                })
+
+            return {
+                "object": "list",
+                "data": models
+            }
+        except Exception as e:
+            logger.error(f"Models list request failed: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @app.exception_handler(Exception)
