@@ -7,9 +7,9 @@ from typing import Any, Dict, Optional, Union
 import mlx.core as mx
 import mlx.nn as nn
 
-from .base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
-from .rope_utils import initialize_rope
-from .quantized_linear_gba import QuantizedLinear
+from gbx_lm.models.base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
+from gbx_lm.models.rope_utils import initialize_rope
+from gbx_lm.models.quantized_linear_gba import QuantizedLinear
 
 
 @dataclass

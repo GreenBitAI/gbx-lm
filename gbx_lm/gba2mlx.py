@@ -8,7 +8,7 @@ from pathlib import Path
 import mlx.nn as nn
 from mlx.utils import tree_flatten
 
-from .utils import extract_bits_and_group_size, save_config, fetch_from_hub, save_weights, upload_to_hub
+from gbx_lm.utils import extract_bits_and_group_size, save_config, fetch_from_hub, save_weights, upload_to_hub
 
 
 def configure_parser() -> argparse.ArgumentParser:

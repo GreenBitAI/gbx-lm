@@ -9,9 +9,9 @@ from typing import Any, Dict, Optional
 import mlx.core as mx
 import mlx.nn as nn
 
-from .base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
-from .switch_layers import SwitchGLU
-from .quantized_linear_gba import QuantizedLinear
+from gbx_lm.models.base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
+from gbx_lm.models.switch_layers import SwitchGLU
+from gbx_lm.models.quantized_linear_gba import QuantizedLinear
 
 
 @dataclass
@@ -490,7 +490,7 @@ class Model(nn.Module):
                             for e in range(self.args.n_routed_experts)
                         ]
                         weights[f"{prefix}.mlp.switch_mlp.{m}.{k}"] = mx.stack(to_join)
-        
+
                 if f"{prefix}.mlp.experts.0.{m}.channel_scale" in weights and f"{prefix}.mlp.experts.0.{m}.q_perm" in weights:
                     for e in range(self.args.n_routed_experts):
                         weights.pop(f"{prefix}.mlp.experts.{e}.{m}.channel_scale")

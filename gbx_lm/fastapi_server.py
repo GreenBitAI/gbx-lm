@@ -22,8 +22,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import asyncio
 
-from .utils import generate_step, load
-from .sample_utils import make_sampler
+from gbx_lm.utils import generate_step, load
+from gbx_lm.sample_utils import make_sampler
 
 # Try to import mlx_lm for mlx-community models
 try:
@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 LOG_DIR = PROJECT_ROOT / "logs"
 
 
-from .server_utils import (
+from gbx_lm.server_utils import (
     stopping_criteria,
     sequence_overlap,
 )
@@ -250,7 +250,7 @@ def create_app(args):
     logger = setup_logging()
 
     try:
-        from .routing import ConfidenceScorer
+        from gbx_lm.routing import ConfidenceScorer
         for model_family, model_id in UE_MODELS.items():
             scorer = ConfidenceScorer(
                 parameters_path=args.ue_parameter_path,

@@ -5,9 +5,9 @@ import argparse
 
 import mlx.core as mx
 
-from .models.cache import make_prompt_cache
-from .sample_utils import make_sampler
-from .utils import load, stream_generate
+from gbx_lm.models.cache import make_prompt_cache
+from gbx_lm.sample_utils import make_sampler
+from gbx_lm.utils import load, stream_generate
 
 DEFAULT_TEMP = 0.0
 DEFAULT_TOP_P = 1.0

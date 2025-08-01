@@ -1,1 +1,1 @@
-from .confidence_scorer import ConfidenceScorer
+from gbx_lm.confidence_scorer import ConfidenceScorer

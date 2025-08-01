@@ -7,9 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import mlx.core as mx
 import mlx.nn as nn
 
-from .base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
-from .su_rope import SuScaledRotaryEmbedding
-from .quantized_linear_gba import QuantizedLinear
+from gbx_lm.models.base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
+from gbx_lm.models.su_rope import SuScaledRotaryEmbedding
+from gbx_lm.models.quantized_linear_gba import QuantizedLinear
 
 
 @dataclass

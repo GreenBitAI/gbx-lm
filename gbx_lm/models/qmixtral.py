@@ -8,9 +8,9 @@ from typing import Any, Dict, Optional, Tuple, Union
 import mlx.core as mx
 import mlx.nn as nn
 
-from .base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
-from .quantized_linear_gba import QuantizedLinear
-from .switch_layers import SwitchGLU
+from gbx_lm.models.base import BaseModelArgs, create_attention_mask, scaled_dot_product_attention
+from gbx_lm.models.quantized_linear_gba import QuantizedLinear
+from gbx_lm.models.switch_layers import SwitchGLU
 
 
 @dataclass

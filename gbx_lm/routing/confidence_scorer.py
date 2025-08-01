@@ -1,7 +1,7 @@
 from typing import Union, Tuple
 
 try:
-    from .libra_router.ue_router import MahalanobisDistanceSeq
+    from gbx_lm.libra_router.ue_router import MahalanobisDistanceSeq
 except Exception as e:
     raise RuntimeError(f"Failed to initialize Mahalanobis distance calculator: {str(e)}")
 

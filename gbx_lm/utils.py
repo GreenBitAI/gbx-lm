@@ -40,11 +40,11 @@ from mlx.utils import tree_flatten, tree_reduce
 from transformers import PreTrainedTokenizer
 
 # Local imports
-from .models import cache
-from .tokenizer_utils import TokenizerWrapper, load_tokenizer
+from gbx_lm.models import cache
+from gbx_lm.tokenizer_utils import TokenizerWrapper, load_tokenizer
 
-from .models import qllama, qmixtral, qqwen2, qphi3, qdeepseek_v3, qqwen3, qqwen3_moe
-from .models.quantized_linear_gba import QuantizedLinear
+from gbx_lm.models import qllama, qmixtral, qqwen2, qphi3, qdeepseek_v3, qqwen3, qqwen3_moe
+from gbx_lm.models.quantized_linear_gba import QuantizedLinear
 import re
 
 # Constants
@@ -828,18 +828,18 @@ def load_model(
             if "norm.weight" in k or "bias" in k or "gate.weight" in k or "lm_head" in k or "embed_tokens" in k or "channel_scale" in k:
                 weights[k] = v.astype(mx.bfloat16)
     ## ===================================================================##
-    
+
     for k, v in weights.items():
         if "scale" in k or "zeros" in k:
                 weights[k] = v.astype(mx.bfloat16)
-    
+
     model_class, model_args_class = get_model_classes(config=config)
 
     model_args = model_args_class.from_dict(config)
     model = model_class(model_args)
 
     if hasattr(model, "sanitize"):
-        weights = model.sanitize(weights) 
+        weights = model.sanitize(weights)
 
     # update QuantizedLinear layers using quantization parameters.
     QuantizedLinear.reinit_module(
@@ -993,21 +993,21 @@ def upload_to_hub(path: str, upload_repo: str, hf_path: str, token: Optional[str
     card.text = dedent(
         f"""
         # {upload_repo}
-        
+
         This quantized low-bit model [{upload_repo}](https://huggingface.co/{upload_repo}) was converted to MLX format from [`{hf_path}`](https://huggingface.co/{hf_path}) using gbx-lm version **{__version__}**.
         Refer to the [original model card](https://huggingface.co/{hf_path}) for more details on the model.
-        
+
         ## Use with mlx
-        
+
         ```bash
         pip install gbx-lm
         ```
-        
+
         ```python
         from gbx_lm import load, generate
-        
+
         model, tokenizer = load("{upload_repo}")
-        
+
         prompt = "hello"
 
         if tokenizer.chat_template is not None:

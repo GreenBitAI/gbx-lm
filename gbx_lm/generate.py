@@ -7,9 +7,9 @@ import sys
 
 import mlx.core as mx
 
-from .models.cache import QuantizedKVCache, load_prompt_cache
-from .sample_utils import make_sampler
-from .utils import generate, load
+from gbx_lm.models.cache import QuantizedKVCache, load_prompt_cache
+from gbx_lm.sample_utils import make_sampler
+from gbx_lm.utils import generate, load
 
 DEFAULT_PROMPT = "hello"
 DEFAULT_MAX_TOKENS = 100
