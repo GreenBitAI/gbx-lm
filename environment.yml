@@ -1,23 +1,13 @@
 name: gbai_mlx_lm
 channels:
   - conda-forge
-  - pytorch
 dependencies:
-  - python=3.9
+  - python=3.11
   - pip=24.0
-  - pytorch::pytorch>=2.0
   - pip:
       - mlx>=0.25.0
-      - numpy
       - transformers[sentencepiece]>=4.39.3
       - huggingface_hub
-      - torch>=2.0.0
-      - protobuf
-      - pyyaml
-      - datasets
       - fastapi
       - uvicorn
       - pydantic
-      # Optional dependencies below - comment as not needed
-      - langchain-core  # For LangChain integration
-      - mlx-lm>=0.24.0  # For MLX-LM model support

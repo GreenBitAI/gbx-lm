@@ -42,7 +42,6 @@ from transformers import PreTrainedTokenizer
 # Local imports
 from .models import cache
 from .tokenizer_utils import TokenizerWrapper, load_tokenizer
-from .tuner.utils import load_adapters
 
 from .models import qllama, qmixtral, qqwen2, qphi3, qdeepseek_v3, qqwen3, qqwen3_moe
 from .models.quantized_linear_gba import QuantizedLinear
@@ -695,28 +694,20 @@ def generate(
 
 def get_parameter_usage_info(weights):
     """
-    Determines whether double quantization and q_perm are used for scales and zeros within the given weights.
-
-    This function iterates through the keys of the weights dictionary, checking for specific
-    keys related to quantization statistics, scales, and zeros. If any of these keys are present,
-    it indicates that double quantization is applied to either scales or zeros, or both.
+    Determines whether q_perm are used for scales and zeros within the given weights.
 
     Parameters:
         weights (dict): A dictionary containing model weights and potentially quantization
                       information.
 
     Returns:
-        bool: True if double quantization is used for either scales or zeros, False otherwise.
         bool: True if q_perm is used, False otherwise.
     """
-    use_double_quantization = False
     use_q_perm = False
     for k, v in weights.items():
-        if 'qstatistic' in k or 'qscales_scales' in k or 'qzeros_scales' in k or 'qscales_zeros' in k or 'qzeros_zeros' in k:
-            use_double_quantization = True
         if 'q_perm' in k:
             use_q_perm = True
-    return use_double_quantization, use_q_perm
+    return use_q_perm
 
 
 def extract_bits_and_group_size(s):
@@ -819,14 +810,10 @@ def load_model(
         weights.update(mx.load(wf))
 
     # get if uses double quantization, a technique to reduce the model size
-    use_double_quantization, use_q_perm = get_parameter_usage_info(weights)
+    use_q_perm = get_parameter_usage_info(weights)
     if not use_q_perm:
         assert quantization['group_size'] in [32, 64,
                                               128], f"The group size value ({group_size}) must be 32, 64 or 128."
-    if is_conversion:
-        info_message = "[INFO] This model {} double quantization.".format(
-            "USES" if use_double_quantization else "DOES NOT use")
-        print(info_message)
 
     ## ==== needs to do this layout adaption for loading GBA weights ==== ##
     if is_conversion:
@@ -835,7 +822,7 @@ def load_model(
             if 'qweight' in k:
                 weights[k] = v.transpose().astype(mx.uint32)
 
-            if not use_double_quantization and ('scales' in k or 'zeros' in k):
+            if 'scales' in k or 'zeros' in k:
                 weights[k] = v.transpose().astype(mx.bfloat16)
 
             if "norm.weight" in k or "bias" in k or "gate.weight" in k or "lm_head" in k or "embed_tokens" in k or "channel_scale" in k:
@@ -859,17 +846,11 @@ def load_model(
         model,
         **quantization,
         strategy=strategy,
-        use_double_quantization = use_double_quantization,
         use_q_perm = use_q_perm
     )
 
     model.load_weights(list(weights.items()), strict=False)
 
-    # If double quantization used in GBA models, fp16 scales and zeros will be created for supporting mlx format.
-    if use_double_quantization:
-        QuantizedLinear.prepare_scales_zeros(
-            model
-        )
     if is_conversion:
         # zeros -> -zeros and release some attributes after loading and adapting params
         QuantizedLinear.post_processing_and_release(
@@ -914,9 +895,7 @@ def load(
     model_path = get_model_path(path_or_hf_repo)
 
     model, config = load_model(model_path, lazy, model_config=model_config)
-    if adapter_path is not None:
-        model = load_adapters(model, adapter_path)
-        model.eval()
+
     tokenizer = load_tokenizer(
         model_path, tokenizer_config, eos_token_ids=config.get("eos_token_id", None)
     )
