@@ -29,6 +29,7 @@ nuitka = "^2.7"
 pytest = "^8.4.1"
 ruff = "^0.8.4"
 mypy = "^1.16.1"
+setuptools = "^80.9.0"
 
 
 [tool.ruff]
