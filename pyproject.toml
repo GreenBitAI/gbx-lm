@@ -1,0 +1,79 @@
+[project]
+name = "gbx-lm"
+dynamic = ["version"]
+description = "Run GreenBitAI's Quantized LLMs on Apple Devices with MLX"
+authors = []
+readme = "README.md"
+requires-python = ">=3.12,<4.0"
+dependencies = [
+    "mlx (>=0.25.0)",
+    "transformers[sentencepiece] (>=4.39.3, <4.45)",
+    "huggingface-hub (>=0.30.2,<0.31.0)",
+    "fastapi (>=0.115.12,<0.116.0)",
+    "uvicorn (>=0.34.2,<0.35.0)",
+    "pydantic (>=2.11.4,<3.0.0)",
+]
+
+[build-system]
+requires = ["poetry-core>=1.0.0", "poetry-dynamic-versioning>=1.0.0,<2.0.0"]
+build-backend = "poetry_dynamic_versioning.backend"
+
+[tool.poetry]
+version = "0.0.0"
+
+[tool.poetry.requires-plugins]
+poetry-dynamic-versioning = { version = ">=1.0.0,<2.0.0", extras = ["plugin"] }
+
+[tool.poetry.group.dev.dependencies]
+nuitka = "^2.7"
+pytest = "^8.4.1"
+ruff = "^0.8.4"
+mypy = "^1.16.1"
+
+
+[tool.ruff]
+src = ["gbx_lm", "tests"]
+line-length = 88
+indent-width = 4
+
+
+[tool.ruff.format]
+quote-style = "double" # "double" or "single" or "preserve"
+line-ending = "auto"
+indent-style = "space"
+
+
+[tool.ruff.lint]
+select = [
+    "E", # pycodestyle errors
+    "W", # pycodestyle warnings
+    "F", # pyflakes
+    "I", # isort
+    "B", # flake8-bugbear
+    "UP", # pyupgrade
+    "SIM", # flake8-simplify
+    "TID", # flake8-tidy-imports
+]
+ignore = [
+    "E501", # Line too long
+]
+
+
+[tool.ruff.lint.isort]
+known-first-party = ["gbx_lm*"]
+force-sort-within-sections = true
+combine-as-imports = true
+
+[tool.mypy]
+# https://mypy.readthedocs.io/en/stable/config_file.html
+disallow_untyped_defs = "True"
+explicit_package_bases = "True"
+warn_no_return = "False"
+warn_unused_ignores = "True"
+warn_redundant_casts = "True"
+allow_redefinition = "True"
+disable_error_code = "typeddict-item, return-value, override, has-type"
+
+[tool.poetry-dynamic-versioning]
+enable = true
+style = "semver"
