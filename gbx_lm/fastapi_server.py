@@ -258,7 +258,7 @@ def create_app(args):
             )
             _confidence_scorers[model_family] = scorer
     except Exception as e:
-        logger.error(f"Error loading confidence scorers: {str(e)}")
+        logger.warning(f"Loading confidence scorers: {str(e)}")
 
     app = FastAPI(
         title="GBX-Model API",
