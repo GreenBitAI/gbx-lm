@@ -99,9 +99,7 @@ class DeepseekV3YarnRotaryEmbedding(nn.Module):
             scaling_factor, mscale_all_dim
         )
         freq_extra = base ** (mx.arange(0, dim, 2, dtype=mx.float32) / dim)
-        freq_inter = scaling_factor * base ** (
-            mx.arange(0, dim, 2, dtype=mx.float32) / dim
-        )
+        freq_inter = scaling_factor * freq_extra
         low, high = yarn_find_correction_range(
             beta_fast,
             beta_slow,
@@ -126,12 +124,6 @@ class DeepseekV3YarnRotaryEmbedding(nn.Module):
             offset=offset,
             freqs=self._freqs,
         )
-
-
-# A clipped silu to prevent fp16 from overflowing
-@partial(mx.compile, shapeless=True)
-def clipped_silu(x):
-    return mx.clip(x * mx.sigmoid(x), a_min=-100, a_max=100)
 
 
 class DeepseekV3Attention(nn.Module):
@@ -183,30 +175,37 @@ class DeepseekV3Attention(nn.Module):
             bias=config.attention_bias,
         )
 
-        mscale_all_dim = self.config.rope_scaling.get("mscale_all_dim", 0)
-        scaling_factor = self.config.rope_scaling["factor"]
-        if mscale_all_dim:
-            mscale = yarn_get_mscale(scaling_factor, mscale_all_dim)
-            self.scale = self.scale * mscale * mscale
+        if self.config.rope_scaling is not None:
+            mscale_all_dim = self.config.rope_scaling.get("mscale_all_dim", 0)
+            scaling_factor = self.config.rope_scaling["factor"]
+            if mscale_all_dim:
+                mscale = yarn_get_mscale(scaling_factor, mscale_all_dim)
+                self.scale = self.scale * mscale * mscale
 
-        rope_kwargs = {
-            key: self.config.rope_scaling[key]
-            for key in [
-                "original_max_position_embeddings",
-                "beta_fast",
-                "beta_slow",
-                "mscale",
-                "mscale_all_dim",
-            ]
-            if key in self.config.rope_scaling
-        }
-        self.rope = DeepseekV3YarnRotaryEmbedding(
-            dim=self.qk_rope_head_dim,
-            max_position_embeddings=self.max_position_embeddings,
-            scaling_factor=scaling_factor,
-            base=self.rope_theta,
-            **rope_kwargs,
-        )
+            rope_kwargs = {
+                key: self.config.rope_scaling[key]
+                for key in [
+                    "original_max_position_embeddings",
+                    "beta_fast",
+                    "beta_slow",
+                    "mscale",
+                    "mscale_all_dim",
+                ]
+                if key in self.config.rope_scaling
+            }
+            self.rope = DeepseekV3YarnRotaryEmbedding(
+                dim=self.qk_rope_head_dim,
+                max_position_embeddings=self.max_position_embeddings,
+                scaling_factor=scaling_factor,
+                base=self.rope_theta,
+                **rope_kwargs,
+            )
+        else:
+            self.rope = nn.RoPE(
+                dims=self.qk_rope_head_dim,
+                base=self.rope_theta,
+                traditional=True,
+            )
 
     def __call__(
         self,
@@ -286,19 +285,22 @@ def group_expert_select(
 
     k = top_k
     scores = mx.sigmoid(gates.astype(mx.float32))
+    orig_scores = scores
     scores = scores + e_score_correction_bias
     scores = mx.unflatten(scores, axis=-1, shape=(n_group, -1))
     group_scores = mx.topk(scores, 2, axis=-1).sum(axis=-1, keepdims=True)
     k = n_group - topk_group
     group_idx = mx.argpartition(group_scores, kth=k - 1, axis=-2)[..., :k, :]
-    scores = mx.put_along_axis(scores, group_idx, mx.array(0.0), axis=-2)
+    scores = mx.put_along_axis(
+        scores, mx.stop_gradient(group_idx), mx.array(0.0), axis=-2
+    )
     scores = mx.flatten(scores, -2, -1)
 
     k = top_k
     inds = mx.argpartition(-scores, kth=k - 1, axis=-1)[..., :k]
-    scores = mx.take_along_axis(scores, inds, axis=-1)
+    scores = mx.take_along_axis(orig_scores, inds, axis=-1)
     if top_k > 1 and norm_topk_prob:
-        denominator = scores.sum(axis=-1, keepdims=True) + 1e-20
+        denominator = scores.sum(axis=-1, keepdims=True)
         scores = scores / denominator
     scores = scores * routed_scaling_factor
 
@@ -340,7 +342,6 @@ class DeepseekV3MoE(nn.Module):
             config.hidden_size,
             config.moe_intermediate_size,
             config.n_routed_experts,
-            activation=clipped_silu,
         )
 
         self.gate = MoEGate(config)
@@ -432,8 +433,6 @@ class DeepseekV3Model(nn.Module):
 
         pipeline_rank = self.pipeline_rank
         pipeline_size = self.pipeline_size
-        # Hack to avoid time-outs during prompt-processing
-        dist_stream = mx.cpu if h.shape[1] > 1 else mx.gpu
         if mask is None:
             mask = create_attention_mask(h, cache)
 
@@ -443,19 +442,17 @@ class DeepseekV3Model(nn.Module):
         # Receive from the previous process in the pipeline
 
         if pipeline_rank < pipeline_size - 1:
-            h = mx.distributed.recv_like(h, (pipeline_rank + 1), stream=dist_stream)
+            h = mx.distributed.recv_like(h, (pipeline_rank + 1))
 
         for i in range(self.num_layers):
             h = self.layers[self.start_idx + i](h, mask, cache[i])
 
         # Send to the next process in the pipeline
         if pipeline_rank != 0:
-            h = mx.distributed.send(
-                h, (pipeline_rank - 1) % pipeline_size, stream=dist_stream
-            )
+            h = mx.distributed.send(h, (pipeline_rank - 1) % pipeline_size)
 
         # Broadcast h while keeping it in the graph
-        h = mx.distributed.all_gather(h, stream=dist_stream)[: h.shape[0]]
+        h = mx.distributed.all_gather(h)[: h.shape[0]]
 
         return self.norm(h)
 
@@ -502,3 +499,10 @@ class Model(nn.Module):
     @property
     def layers(self):
         return self.model.layers[self.model.start_idx : self.model.end_idx]
+
+    @property
+    def cast_predicate(self):
+        def predicate(k):
+            return "e_score_correction_bias" not in k
+
+        return predicate

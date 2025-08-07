@@ -181,7 +181,7 @@ def get_model_path(path_or_hf_repo: str, token=None, revision: Optional[str] = N
                     revision=revision,
                     allow_patterns=[
                         "*.json",
-                        "*.safetensors",
+                        "model*.safetensors",
                         "*.py",
                         "tokenizer.model",
                         "*.tiktoken",
@@ -805,10 +805,6 @@ def load_model(
     config.update(model_config)
 
     weight_files = glob.glob(str(model_path / "model*.safetensors"))
-
-    if not weight_files:
-        # Try weight for back-compat
-        weight_files = glob.glob(str(model_path / "weight*.safetensors"))
 
     if not weight_files:
         logging.error(f"No safetensors found in {model_path}")

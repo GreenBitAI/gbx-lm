@@ -2,9 +2,11 @@
 # Additional code from GreenBitAI is licensed under the Apache 2.0 License.
 
 import math
+from functools import partial
 
 import mlx.core as mx
 import mlx.nn as nn
+
 
 def _gather_sort(x, indices):
     *_, M = indices.shape
@@ -83,7 +85,7 @@ class QuantizedSwitchLinear(nn.Module):
             transpose=True,
             group_size=self.group_size,
             bits=self.bits,
-            sorted_indices=sorted_indices
+            sorted_indices=sorted_indices,
         )
         if "bias" in self:
             x = x + mx.expand_dims(self["bias"][indices], -2)
@@ -117,8 +119,13 @@ class SwitchLinear(nn.Module):
     def num_experts(self):
         return self.weight.shape[0]
 
-    def __call__(self, x, indices):
-        x = mx.gather_mm(x, self["weight"].swapaxes(-1, -2), rhs_indices=indices)
+    def __call__(self, x, indices, sorted_indices=False):
+        x = mx.gather_mm(
+            x,
+            self["weight"].swapaxes(-1, -2),
+            rhs_indices=indices,
+            sorted_indices=sorted_indices,
+        )
         if "bias" in self:
             x = x + mx.expand_dims(self["bias"][indices], -2)
         return x
@@ -134,13 +141,26 @@ class SwitchLinear(nn.Module):
         return ql
 
 
+@partial(mx.compile, shapeless=True)
+def swiglu(x, gate):
+    return nn.silu(gate) * x
+
+
+class SwiGLU(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def __call__(self, x, gate):
+        return swiglu(x, gate)
+
+
 class SwitchGLU(nn.Module):
     def __init__(
         self,
         input_dims: int,
         hidden_dims: int,
         num_experts: int,
-        activation=nn.silu,
+        activation=SwiGLU(),
         bias: bool = False,
         quant: bool = True,
     ):
@@ -160,21 +180,27 @@ class SwitchGLU(nn.Module):
     def __call__(self, x, indices) -> mx.array:
         x = mx.expand_dims(x, (-2, -3))
 
-        should_sort = indices.size>=64
+        # When we have many tokens, then sort them to make sure that the access
+        # of different experts is in order.
+        do_sort = indices.size >= 64
         idx = indices
         inv_order = None
-        if should_sort:
+        if do_sort:
             x, idx, inv_order = _gather_sort(x, indices)
+        if self.training:
+            idx = mx.stop_gradient(idx)
+        x_up = self.up_proj(x, idx, sorted_indices=do_sort)
+        x_gate = self.gate_proj(x, idx, sorted_indices=do_sort)
+        x = self.down_proj(
+            self.activation(x_up, x_gate),
+            idx,
+            sorted_indices=do_sort,
+        )
 
-        x_up = self.up_proj(x, idx, sorted_indices=should_sort)
-        x_gate = self.gate_proj(x, idx, sorted_indices=should_sort)
-        x = self.down_proj(self.activation(x_gate) * x_up, idx, sorted_indices=should_sort)
-
-        if should_sort:
+        if do_sort:
             x = _scatter_unsort(x, inv_order, indices.shape)
 
         return x.squeeze(-2)
-
 
 
 class SwitchMLP(nn.Module):
@@ -183,7 +209,7 @@ class SwitchMLP(nn.Module):
         input_dims: int,
         hidden_dims: int,
         num_experts: int,
-        activation=nn.gelu_approx,
+        activation=nn.GELU(approx="precise"),
         bias: bool = False,
     ):
         super().__init__()
@@ -195,8 +221,20 @@ class SwitchMLP(nn.Module):
     def __call__(self, x, indices) -> mx.array:
         x = mx.expand_dims(x, (-2, -3))
 
-        x = self.fc1(x, indices)
+        # When we have many tokens, then sort them to make sure that the access
+        # of different experts is in order.
+        do_sort = indices.size >= 64
+        idx = indices
+        inv_order = None
+        if do_sort:
+            x, idx, inv_order = _gather_sort(x, indices)
+        if self.training:
+            idx = mx.stop_gradient(idx)
+        x = self.fc1(x, idx, sorted_indices=do_sort)
         x = self.activation(x)
-        x = self.fc2(x, indices)
+        x = self.fc2(x, idx, sorted_indices=do_sort)
+
+        if do_sort:
+            x = _scatter_unsort(x, inv_order, indices.shape)
 
         return x.squeeze(-2)

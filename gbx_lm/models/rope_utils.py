@@ -1,10 +1,70 @@
 # Copyright © 2023-2024 Apple Inc.
 # Additional code from GreenBitAI is licensed under the Apache 2.0 License.
 
-from typing import Optional
+import math
+from typing import List, Optional, Union
 
 import mlx.core as mx
 import mlx.nn as nn
+
+
+class SuScaledRoPE(nn.Module):
+    def __init__(
+        self,
+        dims: int,
+        base: float = 10000.0,
+        max_position_embeddings: int = 131072,
+        original_max_position_embeddings: int = 4096,
+        short_factor: Union[List[float], float] = 1.0,
+        long_factor: Union[List[float], float] = 1.0,
+        short_mscale: float = None,
+        long_mscale: float = None,
+    ):
+        """
+        Su Scaled Rotary Embedding layer.
+
+        Args:
+            dims (int): The feature dimensions to be rotated.
+            base (int, optional): Base for the exponential scaling.
+            max_position_embeddings (int, optional): The maximum sequence
+              length that this model was trained with. This is used to determine
+              the size of the original RoPE embeddings when using long scaling.
+              Default: ``131072``.
+            original_max_position_embeddings (int, optional): The maximum
+              sequence length that this model was trained with. This is used to
+              determine the size of the original RoPE embeddings when using long
+              scaling. Default: ``4096``.
+            short_factor (float or list[float], optional): List of scaling
+              factors for sequences of length lesser than
+              ``original_max_position_embeddings``. Default: ``1.0``.
+            long_factor (float or list[float], optional): List of scaling
+              factors for sequences of length greater than
+              ``original_max_position_embeddings``.  Default: ``1.0``.
+            short_mscale (float, optional): Scale the input prior to embedding.
+            long_mscale (float, optional): Scale the input prior to embedding.
+        """
+        super().__init__()
+        freqs = base ** (mx.arange(0, dims, 2, dtype=mx.float32) / dims)
+        self._freqs = mx.array(long_factor, dtype=mx.float32) * freqs
+        self.original_max_position_embeddings = original_max_position_embeddings
+        self.scale = long_mscale or math.sqrt(
+            1
+            + math.log(max_position_embeddings / original_max_position_embeddings)
+            / math.log(original_max_position_embeddings)
+        )
+        self.dim = dims
+
+    def __call__(self, x, offset: int = 0):
+        x[..., : self.dim] = self.scale * x[..., : self.dim]
+        return mx.fast.rope(
+            x,
+            self.dim,
+            traditional=False,
+            base=None,
+            scale=1.0,
+            offset=offset,
+            freqs=self._freqs,
+        )
 
 
 class Llama3RoPE(nn.Module):
@@ -62,6 +122,78 @@ class Llama3RoPE(nn.Module):
         )
 
 
+class YarnRoPE(nn.Module):
+    def __init__(
+        self,
+        dims,
+        traditional=False,
+        max_position_embeddings=2048,
+        base=10000,
+        scaling_factor=1.0,
+        original_max_position_embeddings=4096,
+        beta_fast=32,
+        beta_slow=1,
+        mscale=1,
+        mscale_all_dim=0,
+    ):
+        super().__init__()
+
+        def yarn_find_correction_dim(num_rotations):
+            return (
+                dims
+                * math.log(
+                    original_max_position_embeddings / (num_rotations * 2 * math.pi)
+                )
+            ) / (2 * math.log(base))
+
+        def yarn_find_correction_range():
+            low = math.floor(yarn_find_correction_dim(beta_fast))
+            high = math.ceil(yarn_find_correction_dim(beta_slow))
+            return max(low, 0), min(high, dims - 1)
+
+        def yarn_get_mscale(scale=1, mscale=1):
+            if scale <= 1:
+                return 1.0
+            return 0.1 * mscale * math.log(scale) + 1.0
+
+        def yarn_linear_ramp_mask(min_val, max_val, dim):
+            if min_val == max_val:
+                max_val += 0.001  # Prevent singularity
+
+            linear_func = (mx.arange(dim, dtype=mx.float32) - min_val) / (
+                max_val - min_val
+            )
+            return mx.clip(linear_func, 0, 1)
+
+        self.mscale = yarn_get_mscale(scaling_factor, mscale) / yarn_get_mscale(
+            scaling_factor, mscale_all_dim
+        )
+        freq_extra = base ** (mx.arange(0, dims, 2, dtype=mx.float32) / dims)
+        freq_inter = scaling_factor * base ** (
+            mx.arange(0, dims, 2, dtype=mx.float32) / dims
+        )
+        low, high = yarn_find_correction_range()
+        freq_mask = 1.0 - yarn_linear_ramp_mask(low, high, dims // 2)
+        self._freqs = (freq_inter * freq_extra) / (
+            freq_inter * freq_mask + freq_extra * (1 - freq_mask)
+        )
+        self.dims = dims
+        self.traditional = traditional
+
+    def __call__(self, x, offset=0):
+        if self.mscale != 1.0:
+            x[..., : self.dims] = self.mscale * x[..., : self.dims]
+        return mx.fast.rope(
+            x,
+            self.dims,
+            traditional=self.traditional,
+            base=None,
+            scale=1.0,
+            offset=offset,
+            freqs=self._freqs,
+        )
+
+
 def initialize_rope(
     dims,
     base,
@@ -88,5 +220,38 @@ def initialize_rope(
             base=base,
             scaling_config=scaling_config,
         )
+    elif rope_type == "yarn":
+        scaling_factor = scaling_config["factor"]
+        rope_kwargs = {
+            key: scaling_config[key]
+            for key in [
+                "original_max_position_embeddings",
+                "beta_fast",
+                "beta_slow",
+                "mscale",
+                "mscale_all_dim",
+            ]
+            if key in scaling_config
+        }
+        return YarnRoPE(
+            dims=dims,
+            max_position_embeddings=max_position_embeddings,
+            traditional=traditional,
+            scaling_factor=scaling_factor,
+            base=base,
+            **rope_kwargs,
+        )
+    elif rope_type == "longrope":
+        return SuScaledRoPE(
+            dims=dims,
+            base=base,
+            max_position_embeddings=max_position_embeddings,
+            original_max_position_embeddings=scaling_config[
+                "original_max_position_embeddings"
+            ],
+            short_factor=scaling_config["short_factor"],
+            long_factor=scaling_config["long_factor"],
+        )
+
     else:
         raise ValueError(f"Unsupported RoPE type {rope_type}")
