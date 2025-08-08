@@ -709,7 +709,6 @@ def calibrated_generate(
     method: str = None,
     verbose: bool = False,
     bench = None,
-    **method_kwargs,
 ) -> str:
     """
     Generate text using various calibration methods.
@@ -733,7 +732,7 @@ def calibrated_generate(
     Returns:
         str: Generated text.
     """
-    from .calibration import generate_response, decoding_config
+    from .calibration import generate_response
     if isinstance(prompt, str):
         messages = [{"role": "user", "content": prompt}]
     elif isinstance(prompt, list) and isinstance(prompt[0], int):
@@ -741,23 +740,9 @@ def calibrated_generate(
         messages = [{"role": "user", "content": text}]
     else:
         raise ValueError("Prompt must be a string or list of token IDs")
-    
-    if method in decoding_config:
-        config = decoding_config[method].copy()
-        config.update(method_kwargs)
-        
-        original_config = decoding_config[method].copy()
-        decoding_config[method].update(method_kwargs)
-        
-        try:
-            response = generate_response(model, tokenizer, messages, method, bench=bench)
-        finally:
-            decoding_config[method] = original_config
-            
-        return response
-    else:
-        available_methods = list(decoding_config.keys())
-        raise ValueError(f"Unknown method '{method}'. Available methods: {available_methods}")
+
+    response = generate_response(model, tokenizer, messages, method, bench=bench)
+    return response
 
 
 def get_parameter_usage_info(weights):
