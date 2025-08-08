@@ -150,6 +150,14 @@ def setup_arg_parser():
         help="Number of tokens to draft when using speculative decoding.",
         default=2,
     )
+    # Calibration method arguments
+    parser.add_argument(
+        "--calibration-method",
+        type=str,
+        choices=["eminf", "temp", "sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"],
+        default=None,
+        help="Calibration method to use for generation",
+    )
     return parser
 
 
@@ -247,24 +255,38 @@ def main():
             raise ValueError("Draft model tokenizer does not match model tokenizer.")
     else:
         draft_model = None
-    sampler = make_sampler(args.temp, args.top_p, args.min_p, args.min_tokens_to_keep)
-    response = generate(
-        model,
-        tokenizer,
-        prompt,
-        max_tokens=args.max_tokens,
-        verbose=args.verbose,
-        sampler=sampler,
-        max_kv_size=args.max_kv_size,
-        prompt_cache=prompt_cache if using_cache else None,
-        kv_bits=args.kv_bits,
-        kv_group_size=args.kv_group_size,
-        quantized_kv_start=args.quantized_kv_start,
-        draft_model=draft_model,
-        num_draft_tokens=args.num_draft_tokens,
-    )
+    
+    if args.calibration_method is not None:
+        from .utils import calibrated_generate
+        response = calibrated_generate(
+            model,
+            tokenizer,
+            prompt,
+            method=args.calibration_method,
+            verbose=args.verbose
+        )
+    else:
+        sampler = make_sampler(args.temp, args.top_p, args.min_p, args.min_tokens_to_keep)
+        response = generate(
+            model,
+            tokenizer,
+            prompt,
+            max_tokens = args.max_tokens,
+            verbose = args.verbose,
+            sampler=sampler,
+            max_kv_size = args.max_kv_size,
+            prompt_cache = prompt_cache if using_cache else None,
+            kv_bits = args.kv_bits,
+            kv_group_size = args.kv_group_size,
+            quantized_kv_start = args.quantized_kv_start,
+            draft_model= draft_model,
+            num_draft_tokens=args.num_draft_tokens,
+        )
     if not args.verbose:
         print(response)
+    else:
+        if args.calibration_method != "original":
+            print(f"\nFinal response: {response}")
 
 
 if __name__ == "__main__":
