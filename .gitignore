@@ -153,3 +153,4 @@ logs/*
 # databasegit status
 db/*
 !db/.gitkeep
+.DS_Store

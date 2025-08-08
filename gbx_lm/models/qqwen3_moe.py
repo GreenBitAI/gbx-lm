@@ -191,6 +191,7 @@ class Qwen3MoeModel(nn.Module):
         inputs: mx.array,
         mask: mx.array = None,
         cache=None,
+        output_hidden_states = False
     ):
         h = self.embed_tokens(inputs)
 
@@ -199,11 +200,20 @@ class Qwen3MoeModel(nn.Module):
 
         if cache is None:
             cache = [None] * len(self.layers)
-
+        hidden_states = []
+        if output_hidden_states:
+            hidden_states.append(h)
         for layer, c in zip(self.layers, cache):
             h = layer(h, mask, c)
+            if output_hidden_states:
+                hidden_states.append(h)
 
-        return self.norm(h)
+        final_h = self.norm(h)
+        if output_hidden_states:
+            hidden_states.append(final_h)
+            return final_h, tuple(hidden_states)
+        else:
+            return final_h
 
 
 class Model(nn.Module):

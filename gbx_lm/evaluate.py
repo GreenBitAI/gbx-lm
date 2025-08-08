@@ -89,6 +89,7 @@ class MLXLM(LM):
             max_tokens: Optional[int] = None,
             use_chat_template: Optional[bool] = None,
             enable_thinking: Optional[bool] = None,  # 添加 enable_thinking 参数
+            calibration_method: Optional[str] = None,
     ) -> None:
         super().__init__()
         self._batch_size = batch_size
@@ -96,6 +97,7 @@ class MLXLM(LM):
         self.model_type = detect_model_type(path_or_hf_repo)
         self.is_qwen3 = is_qwen3_model(path_or_hf_repo)
         self.enable_thinking = enable_thinking  # 存储 enable_thinking 参数
+        self.calibration_method = calibration_method
 
         print(f"Detected model type: {self.model_type}")
         if self.is_qwen3:
@@ -415,7 +417,6 @@ class MLXLM(LM):
         # contrary to the doc the second element of the tuple contains
         # {'do_sample': False, 'until': ['\n\n'], 'temperature': 0}
         completions = []
-
         for context, opt in tqdm(zip(contexts, options), total=len(contexts)):
             until = opt["until"]
 
@@ -450,10 +451,18 @@ class MLXLM(LM):
                 self.tokenizer.model_max_length - len(context_tokens),
             )
             text = ""
-            for response in stream_generate(
-                    self._model, self.tokenizer, prompt=context_tokens, max_tokens=max_tokens
-            ):
-                text += response.text
+            if self.calibration_method is not None:
+                from .calibration import decoding_config
+                decoding_kwargs = decoding_config[self.calibration_method]
+                from .utils import calibrated_generate
+                response = calibrated_generate(
+                    self._model,
+                    self.tokenizer,
+                    prompt = context_tokens,
+                    method = self.calibration_method,
+                    **decoding_kwargs
+                )
+                text += response
                 if any(u in text for u in until):
                     text = _rstrip_until(text, until)
                     # 处理思考内容
@@ -462,10 +471,22 @@ class MLXLM(LM):
                     completions.append(text)
                     break
             else:
-                # 处理思考内容
-                if self.is_qwen3 and '</think>' in text:
-                    text = self._process_thinking_output(text)
-                completions.append(text)
+                for response in stream_generate(
+                        self._model, self.tokenizer, prompt=context_tokens, max_tokens=max_tokens
+                ):
+                    text += response.text
+                    if any(u in text for u in until):
+                        text = _rstrip_until(text, until)
+                        # 处理思考内容
+                        if self.is_qwen3 and '</think>' in text:
+                            text = self._process_thinking_output(text)
+                        completions.append(text)
+                        break
+                else:
+                    # 处理思考内容
+                    if self.is_qwen3 and '</think>' in text:
+                        text = self._process_thinking_output(text)
+                    completions.append(text)
 
         return completions
 
@@ -517,6 +538,13 @@ def main():
              "When disabled, thinking content will be removed.",
         default=None,
     )
+    parser.add_argument(
+        "--calibration-method",
+        type =str,
+        choices = ["eminf", "temp", "sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"],
+        default = None,
+        help = "Calibration method to use for the model"
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir)
@@ -532,7 +560,8 @@ def main():
         batch_size=args.batch_size,
         max_tokens=args.max_tokens,
         use_chat_template=args.apply_chat_template,
-        enable_thinking=args.enable_thinking,  # 传递 enable_thinking 参数
+        enable_thinking=args.enable_thinking,
+        calibration_method=args.calibration_method,
     )
     results = lm_eval.simple_evaluate(
         model=lm,

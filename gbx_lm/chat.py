@@ -56,6 +56,43 @@ def setup_arg_parser():
         default=DEFAULT_SYSTEM_PROMPT,
         help="System prompt to be used for the chat template",
     )
+    parser.add_argument(
+        "--calibration-method",
+        type = str,
+        choices = ["eminf", "temp", "sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"],
+        default = None,
+        help = "Calibration method to use for the model"
+    )
+    parser.add_argument(
+        "--evolution-rate",
+        type=float,
+        default=1.2,
+        help="Evolution rate for SLED-based methods",
+    )
+    parser.add_argument(
+        "--evolution-scale",
+        type=int,
+        default=10,
+        help="Evolution scale (top-k) for SLED-based methods",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.6,
+        help="Alpha parameter for entropy-based methods. Recommended 0.65 for eminf and 0.5 for ATS",
+    )
+    parser.add_argument(
+        "--delta",
+        type=float,
+        default=0.05,
+        help="Delta parameter for temperature scaling methods",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.05,
+        help="Threshold parameter for entropy minimization",
+    )
     return parser
 
 
@@ -81,15 +118,49 @@ def main():
             break
         messages.append({"role": "user", "content": query})
         prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
-        for response in stream_generate(
-            model,
-            tokenizer,
-            prompt,
-            max_tokens=args.max_tokens,
-            sampler=make_sampler(args.temp, args.top_p),
-            prompt_cache=prompt_cache,
-        ):
+        if args.calibration_method is not None:
+            method_kwargs = {
+                "max_new_tokens": args.max_tokens,
+                "temperature": args.temp,
+                "top_p": args.top_p,
+            }
+            if args.calibration_method in ["sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"]:
+                method_kwargs.update({
+                    "evolution_rate": args.evolution_rate,
+                    "evolution_scale": args.evolution_scale,
+                })
+            if args.calibration_method in ["eminf", "sledeminf", "eminfsled"]:
+                method_kwargs.update({
+                    "alpha": args.alpha,
+                    "threshold": args.threshold,
+                })
+            
+            if args.calibration_method in ["temp", "sledtemp", "tempsled"]:
+                method_kwargs.update({
+                    "alpha": args.alpha,
+                    "delta": args.delta,
+                })
+
+            from .utils import calibrated_generate
+            response = calibrated_generate(
+                model,
+                tokenizer,
+                prompt,
+                method = args.calibration_method,
+                verbose = args.verbose,
+                **method_kwargs
+            )
             print(response.text, flush=True, end="")
+        else:
+            for response in stream_generate(
+                model,
+                tokenizer,
+                prompt,
+                max_tokens=args.max_tokens,
+                sampler=make_sampler(args.temp, args.top_p),
+                prompt_cache=prompt_cache,
+            ):
+                print(response.text, flush=True, end="")
         print()
 
 

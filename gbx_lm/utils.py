@@ -181,7 +181,7 @@ def get_model_path(path_or_hf_repo: str, token=None, revision: Optional[str] = N
                     revision=revision,
                     allow_patterns=[
                         "*.json",
-                        "model*.safetensors",
+                        "*.safetensors",
                         "*.py",
                         "tokenizer.model",
                         "*.tiktoken",
@@ -288,9 +288,18 @@ def generate_step(
         with mx.stream(generation_stream):
             prompt_hidden_states = None
             if hidden_states:
-                logits, prompt_hidden_states = model(y[None], cache=prompt_cache, hidden_states=hidden_states)
+                result = model(y[None], cache=prompt_cache, hidden_states=hidden_states)
+                if isinstance(result, tuple) and len(result) == 2:
+                    logits, prompt_hidden_states = result
+                else:
+                    logits = result
+                    prompt_hidden_states = None
             else:
-                logits = model(y[None], cache=prompt_cache)
+                result = model(y[None], cache=prompt_cache)
+                if isinstance(result, tuple):
+                    logits = result[0]
+                else:
+                    logits = result
             logits = logits[:, -1, :]
 
             if logits_processors:
@@ -693,6 +702,64 @@ def generate(
         return text
 
 
+def calibrated_generate(
+    model: nn.Module,
+    tokenizer: Union[PreTrainedTokenizer, TokenizerWrapper],
+    prompt: Union[str, List[int]],
+    method: str = None,
+    verbose: bool = False,
+    bench = None,
+    **method_kwargs,
+) -> str:
+    """
+    Generate text using various calibration methods.
+    
+    Args:
+        model (nn.Module): The language model.
+        tokenizer (PreTrainedTokenizer): The tokenizer.
+        prompt (Union[str, List[int]]): The input prompt string or integer tokens.
+        method (str): The calibration method to use. Options:
+            - "eminf": Entropy minimization 
+            - "temp": Temperature scaling
+            - "sled": SLED evolution
+            - "sledeminf": SLED + entropy minimization
+            - "sledtemp": SLED + temperature scaling
+            - "eminfsled": Entropy minimization + SLED
+            - "tempsled": Temperature scaling + SLED
+        verbose (bool): If True, print generation progress.
+        bench: Optional benchmarking object.
+        **method_kwargs: Additional arguments specific to the chosen method.
+    
+    Returns:
+        str: Generated text.
+    """
+    from .calibration import generate_response, decoding_config
+    if isinstance(prompt, str):
+        messages = [{"role": "user", "content": prompt}]
+    elif isinstance(prompt, list) and isinstance(prompt[0], int):
+        text = tokenizer.decode(prompt)
+        messages = [{"role": "user", "content": text}]
+    else:
+        raise ValueError("Prompt must be a string or list of token IDs")
+    
+    if method in decoding_config:
+        config = decoding_config[method].copy()
+        config.update(method_kwargs)
+        
+        original_config = decoding_config[method].copy()
+        decoding_config[method].update(method_kwargs)
+        
+        try:
+            response = generate_response(model, tokenizer, messages, method, bench=bench)
+        finally:
+            decoding_config[method] = original_config
+            
+        return response
+    else:
+        available_methods = list(decoding_config.keys())
+        raise ValueError(f"Unknown method '{method}'. Available methods: {available_methods}")
+
+
 def get_parameter_usage_info(weights):
     """
     Determines whether double quantization and q_perm are used for scales and zeros within the given weights.
@@ -805,6 +872,10 @@ def load_model(
     config.update(model_config)
 
     weight_files = glob.glob(str(model_path / "model*.safetensors"))
+
+    if not weight_files:
+        # Try weight for back-compat
+        weight_files = glob.glob(str(model_path / "weight*.safetensors"))
 
     if not weight_files:
         logging.error(f"No safetensors found in {model_path}")
