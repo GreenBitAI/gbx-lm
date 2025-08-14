@@ -139,6 +139,8 @@ def parse_args():
     parser.add_argument("--use_default_chat_template", action="store_true", help="Use the default chat template")
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
     parser.add_argument("--ue_parameter_path", type=str, default="db/router.db", help="Path to the method parameters database")
+    parser.add_argument("--calibration-method", type=str, choices=["eminf", "temp", "sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"], default=None, help="Default calibration method for generation")
+    parser.add_argument("--enable-cache", action="store_true", help="Enable prompt caching for better performance in multi-turn conversations")
     return parser.parse_args()
 
 
@@ -157,6 +159,10 @@ class ServerConfig:
             self.models_to_serve.update(kwargs["model_list"])
         elif kwargs.get("model"):
             self.models_to_serve.add(kwargs["model"])
+        
+        # Store calibration and cache settings
+        self.default_calibration_method = kwargs.get("calibration_method")
+        self.enable_cache = kwargs.get("enable_cache", False)
 
     def get_model_lock(self, model_path: str):
         """Get the lock for the specified model, creating it if it does not exist."""
@@ -168,6 +174,7 @@ class ModelProvider:
     def __init__(self, cli_args: argparse.Namespace):
         self.cli_args = cli_args
         self.model_cache: Dict[str, tuple] = {}  # Cache for loaded models
+        self.prompt_caches: Dict[str, any] = {}  # Cache for PromptCache instances
 
         # Initialize with default model if specified
         try:
@@ -235,6 +242,20 @@ class ModelProvider:
             logger.error(f"Failed to load model from {model_path}: {str(e)}")
             raise
 
+    def get_or_create_prompt_cache(self, model_path: str, model, tokenizer, system_prompt: str = None):
+        """Get or create a PromptCache for the specified model."""
+        if model_path not in self.prompt_caches:
+            from .prompt_cache import PromptCache
+            prompt_cache = PromptCache()
+            #Precached a sys
+            if system_prompt:
+                logger.info(f"Pre-caching system prompt for model {model_path}")
+                prompt_cache.cache_system_prompt(model, system_prompt, tokenizer)
+            
+            self.prompt_caches[model_path] = prompt_cache
+            
+        return self.prompt_caches[model_path]
+
 def convert_hidden_states_to_list(hidden_states):
     """Convert MLX array hidden states to nested Python lists."""
     if hidden_states is None or hidden_states == []:
@@ -292,7 +313,9 @@ def create_app(args):
         trust_remote_code=args.trust_remote_code,
         chat_template=args.chat_template,
         use_default_chat_template=args.use_default_chat_template,
-        eos_token=args.eos_token
+        eos_token=args.eos_token,
+        calibration_method=getattr(args, 'calibration_method', None),
+        enable_cache=getattr(args, 'enable_cache', False)
     )
 
     # Initialize model provider
@@ -437,6 +460,8 @@ class CompletionRequest(BaseModel):
     repetition_context_size: int = 20
     with_hidden_states: bool = False
     remote_score: bool = True
+    calibration_method: Optional[str] = None
+    enable_cache: bool = False
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -452,6 +477,8 @@ class ChatCompletionRequest(BaseModel):
     with_hidden_states: bool = False
     remote_score: bool = True
     enable_thinking: Optional[bool] = None  # Qwen3 Model only feature
+    calibration_method: Optional[str] = None
+    enable_cache: bool = False
 
 
 async def stream_completion(prompt, request, model, tokenizer):
@@ -621,8 +648,42 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     yield "data: [DONE]\n\n"
 
 
-async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens):
+async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens, calibration_method=None, prompt_cache_obj=None, enable_cache=False):
     """Wrap the synchronous generate_step as an async generator."""
+    
+    # If calibration method is specified, use calibrated_generate
+    if calibration_method:
+        from .utils import calibrated_generate
+        
+        # For calibration methods, we need input_ids_no_gen for cache optimization
+        # This is a simplified approach - in a real server you might want to pass this from the caller
+        if isinstance(prompt, mx.array):
+            input_ids = prompt.tolist()
+        else:
+            input_ids = prompt
+            
+        # Generate the full response using calibrated_generate
+        response = await asyncio.to_thread(
+            calibrated_generate,
+            model,
+            tokenizer,
+            input_ids,
+            method=calibration_method,
+            verbose=False,
+            prompt_cache=prompt_cache_obj,
+            use_cache=enable_cache,
+            max_tokens=max_tokens
+        )
+        
+        # Tokenize the response to yield tokens one by one
+        if isinstance(response, str):
+            response_tokens = tokenizer.encode(response, add_special_tokens=False)
+            for token in response_tokens:
+                yield (token, None, None)
+                await asyncio.sleep(0)
+        return
+    
+    # Regular generation
     sampler = make_sampler(temp, top_p)
 
     # Determine if we're using a mlx-community model

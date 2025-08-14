@@ -58,40 +58,15 @@ def setup_arg_parser():
     )
     parser.add_argument(
         "--calibration-method",
-        type = str,
-        choices = ["eminf", "temp", "sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"],
-        default = None,
-        help = "Calibration method to use for the model"
+        type=str,
+        choices=["eminf", "temp", "sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"],
+        default=None,
+        help="Calibration method to use for generation",
     )
     parser.add_argument(
-        "--evolution-rate",
-        type=float,
-        default=1.2,
-        help="Evolution rate for SLED-based methods",
-    )
-    parser.add_argument(
-        "--evolution-scale",
-        type=int,
-        default=10,
-        help="Evolution scale (top-k) for SLED-based methods",
-    )
-    parser.add_argument(
-        "--alpha",
-        type=float,
-        default=0.6,
-        help="Alpha parameter for entropy-based methods. Recommended 0.65 for eminf and 0.5 for ATS",
-    )
-    parser.add_argument(
-        "--delta",
-        type=float,
-        default=0.05,
-        help="Delta parameter for temperature scaling methods",
-    )
-    parser.add_argument(
-        "--threshold",
-        type=float,
-        default=0.05,
-        help="Threshold parameter for entropy minimization",
+        "--enable-cache",
+        action="store_true",
+        help="Enable prompt caching for better performance in multi-turn conversations",
     )
     return parser
 
@@ -109,7 +84,20 @@ def main():
     )
 
     print(f"[INFO] Starting chat session with {args.model}. To exit, enter 'q'.")
-    prompt_cache = make_prompt_cache(model, args.max_kv_size)
+    
+    # Initialize cache for both calibration and regular generation
+    prompt_cache_obj = None
+    mlx_cache = None
+    
+    if args.enable_cache:
+        from .prompt_cache import PromptCache
+        prompt_cache_obj = PromptCache()
+        print("Pre-caching system prompt...")
+        prompt_cache_obj.cache_system_prompt(model, args.system_prompt, tokenizer)
+    else:
+        # Always create MLX cache for regular chat functionality
+        mlx_cache = make_prompt_cache(model, args.max_kv_size)
+    
     messages = [{"role": "system", "content": args.system_prompt}]
 
     while True:
@@ -117,50 +105,80 @@ def main():
         if query == "q":
             break
         messages.append({"role": "user", "content": query})
-        prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+        
         if args.calibration_method is not None:
-            method_kwargs = {
-                "max_new_tokens": args.max_tokens,
-                "temperature": args.temp,
-                "top_p": args.top_p,
-            }
-            if args.calibration_method in ["sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"]:
-                method_kwargs.update({
-                    "evolution_rate": args.evolution_rate,
-                    "evolution_scale": args.evolution_scale,
-                })
-            if args.calibration_method in ["eminf", "sledeminf", "eminfsled"]:
-                method_kwargs.update({
-                    "alpha": args.alpha,
-                    "threshold": args.threshold,
-                })
+            # For calibration methods, use tokenized input
+            input_ids_with_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=False)
+            input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=False)
             
-            if args.calibration_method in ["temp", "sledtemp", "tempsled"]:
-                method_kwargs.update({
-                    "alpha": args.alpha,
-                    "delta": args.delta,
-                })
-
             from .utils import calibrated_generate
             response = calibrated_generate(
                 model,
                 tokenizer,
-                prompt,
-                method = args.calibration_method,
-                verbose = args.verbose,
-                **method_kwargs
+                input_ids_with_gen,
+                method=args.calibration_method,
+                verbose=True,
+                prompt_cache=prompt_cache_obj,
+                use_cache=args.enable_cache,
+                system_prompt=args.system_prompt,
+                input_ids_no_gen=input_ids_no_gen
             )
-            print(response.text, flush=True, end="")
+            print(response, flush=True, end="")
+            
+            # Update messages with the response
+            messages.append({"role": "assistant", "content": response})
+            
+            # Update cache after generation
+            if args.enable_cache and prompt_cache_obj:
+                prompt_cache_obj.update_after_step(messages, tokenizer)
         else:
-            for response in stream_generate(
-                model,
-                tokenizer,
-                prompt,
-                max_tokens=args.max_tokens,
-                sampler=make_sampler(args.temp, args.top_p),
-                prompt_cache=prompt_cache,
-            ):
-                print(response.text, flush=True, end="")
+            # For regular generation with cache optimization
+            if args.enable_cache and prompt_cache_obj:
+                # Use PromptCache for prefix detection and incremental processing
+                input_ids_with_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=False)
+                input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=False)
+                
+                # Use get_input_ids for cache optimization
+                from .calibration import get_input_ids
+                model_key = getattr(model, "model_key", id(model))
+                optimized_tokens, cache_hit, cache_to_use = get_input_ids(
+                    prompt_cache_obj, model, input_ids_with_gen, input_ids_no_gen, model_key, use_cache=True
+                )
+                
+                response_text = ""
+                for response in stream_generate(
+                    model,
+                    tokenizer,
+                    optimized_tokens,
+                    max_tokens=args.max_tokens,
+                    sampler=make_sampler(args.temp, args.top_p),
+                    prompt_cache=cache_to_use,
+                ):
+                    print(response.text, flush=True, end="")
+                    response_text += response.text
+            else:
+                # Regular generation without cache optimization
+                prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+                
+                response_text = ""
+                for response in stream_generate(
+                    model,
+                    tokenizer,
+                    prompt,
+                    max_tokens=args.max_tokens,
+                    sampler=make_sampler(args.temp, args.top_p),
+                    prompt_cache=mlx_cache,
+                ):
+                    print(response.text, flush=True, end="")
+                    response_text += response.text
+            
+            # Update messages with the response
+            messages.append({"role": "assistant", "content": response_text})
+            
+            # Update cache after generation
+            if args.enable_cache and prompt_cache_obj:
+                prompt_cache_obj.update_after_step(messages, tokenizer)
+        
         print()
 
 

@@ -150,13 +150,17 @@ def setup_arg_parser():
         help="Number of tokens to draft when using speculative decoding.",
         default=2,
     )
-    # Calibration method arguments
     parser.add_argument(
         "--calibration-method",
         type=str,
         choices=["eminf", "temp", "sled", "sledeminf", "sledtemp", "eminfsled", "tempsled"],
         default=None,
         help="Calibration method to use for generation",
+    )
+    parser.add_argument(
+        "--enable-cache",
+        action="store_true",
+        help="Enable prompt caching for better performances in multi-turn conversations",
     )
     return parser
 
@@ -166,7 +170,6 @@ def main():
     args = parser.parse_args()
     mx.random.seed(args.seed)
 
-    # Load the prompt cache and metadata if a cache file is provided
     using_cache = args.prompt_cache_file is not None
     if using_cache:
         prompt_cache, metadata = load_prompt_cache(
@@ -183,7 +186,6 @@ def main():
                     "--kv-group-size does not match the kv cache loaded from --prompt-cache-file."
                 )
 
-    # Building tokenizer_config
     tokenizer_config = (
         {} if not using_cache else json.loads(metadata["tokenizer_config"])
     )
@@ -235,8 +237,6 @@ def main():
             **template_kwargs,
         )
 
-        # Treat the prompt as a suffix assuming that the prefix is in the
-        # stored kv cache.
         if using_cache:
             messages[-1]["content"] = "<query>"
             test_prompt = tokenizer.apply_chat_template(
@@ -256,26 +256,72 @@ def main():
     else:
         draft_model = None
     
-    if args.calibration_method is not None:
+    prompt_cache_obj = None
+    if args.enable_cache:
+        from .prompt_cache import PromptCache
+        prompt_cache_obj = PromptCache()
+        
+        if args.system_prompt and not args.ignore_chat_template:
+            print("Pre-caching system prompt...")
+            prompt_cache_obj.cache_system_prompt(model, args.system_prompt, tokenizer)
+
+    if args.calibration_method is not None: 
         from .utils import calibrated_generate
         response = calibrated_generate(
             model,
             tokenizer,
             prompt,
             method=args.calibration_method,
-            verbose=args.verbose
+            verbose=args.verbose,
+            prompt_cache=prompt_cache_obj,
+            use_cache=args.enable_cache,
+            system_prompt=args.system_prompt if not args.ignore_chat_template else None
         )
     else:
         sampler = make_sampler(args.temp, args.top_p, args.min_p, args.min_tokens_to_keep)
+        
+        # Handle caching for regular generation
+        if args.enable_cache and prompt_cache_obj:
+            # For enable_cache, use PromptCache to detect prefix and process incrementally
+            if not args.ignore_chat_template and tokenizer.chat_template is not None:
+                # Get both with_gen and no_gen versions for cache optimization
+                if args.system_prompt is not None:
+                    messages = [{"role": "system", "content": args.system_prompt}]
+                else:
+                    messages = []
+                messages.append({"role": "user", "content": args.prompt.replace("\\n", "\n").replace("\\t", "\t")})
+                
+                input_ids_with_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=False)
+                input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=False)
+                
+                # Use get_input_ids for cache optimization
+                from .calibration import get_input_ids
+                model_key = getattr(model, "model_key", id(model))
+                optimized_prompt, cache_hit, cache_to_use = get_input_ids(
+                    prompt_cache_obj, model, input_ids_with_gen, input_ids_no_gen, model_key, use_cache=True
+                )
+            else:
+                # For non-chat template, still use basic caching
+                optimized_prompt = prompt
+                cache_to_use = prompt_cache_obj.cache if prompt_cache_obj.cache else make_prompt_cache(model)
+        elif using_cache:
+            # Use file-based cache
+            cache_to_use = prompt_cache
+            optimized_prompt = prompt
+        else:
+            # No caching
+            cache_to_use = None
+            optimized_prompt = prompt
+        
         response = generate(
             model,
             tokenizer,
-            prompt,
+            optimized_prompt,
             max_tokens = args.max_tokens,
             verbose = args.verbose,
             sampler=sampler,
             max_kv_size = args.max_kv_size,
-            prompt_cache = prompt_cache if using_cache else None,
+            prompt_cache = cache_to_use,
             kv_bits = args.kv_bits,
             kv_group_size = args.kv_group_size,
             quantized_kv_start = args.quantized_kv_start,

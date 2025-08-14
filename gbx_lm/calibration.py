@@ -4,7 +4,7 @@ import mlx.core as mx
 import mlx.nn as nn
 from .models.cache import make_prompt_cache
 from .sample_utils import make_sampler, make_logits_processors
-from .utils import generate as gbx_generate
+
 decoding_config = {
     "eminf": {
         "temperature": 0,
@@ -128,7 +128,32 @@ decoding_config = {
         "delta": 0.05
     }
 }
-def sledeminf_generate(model, tokenizer, input_ids, max_token = 2048, num_steps = None, alpha = 0.65, threshold = 0.05, max_kv_size = None, bench = None):
+def get_input_ids(prompt_cache, model, ids_with_gen, ids_no_gen, model_key, use_cache=True):
+    """
+    Helper function to apply prompt cache to input_ids for generation methods.
+    Returns: (new_input_ids, use_cache, cache)
+    Args:
+        use_cache: Whether to use prompt caching (independent switch)
+    """
+    if not use_cache or prompt_cache is None:
+        cache = make_prompt_cache(model)
+        print(f"Create new cache (caching {'disabled' if not use_cache else 'not available'})")
+        return ids_with_gen, False, cache
+        
+    new_tokens, cache, cache_hit = prompt_cache.get_prompt_cache(model, ids_with_gen, ids_no_gen, model_key)
+    
+    if cache_hit:
+        print(f"Use input cache 🐈 Processing {len(new_tokens)} tokens instead of {len(ids_with_gen)}")
+        return new_tokens if len(new_tokens) > 0 else ids_with_gen, True, cache
+    else:
+        print(f"No cache benefit - processing all tokens")
+        return ids_with_gen, False, cache
+
+def sledeminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_token = 2048, num_steps = None, alpha = 0.65, threshold = 0.05, max_kv_size = None, bench = None, prompt_cache=None, use_cache=True):
+    # Get input IDs with cache optimization
+    model_key = getattr(model, "model_key", id(model))
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
+    
     def entropy_calculation(x):
         probs = nn.softmax(x, axis = -1)
         return -mx.sum(probs * mx.log(probs + 1e-10))
@@ -137,11 +162,10 @@ def sledeminf_generate(model, tokenizer, input_ids, max_token = 2048, num_steps 
         s = r/(1.0+r)
         steps = int(min_step+max_step *s)   
         return steps
-    generated_ids = list(input_ids)
-    original_length = len(input_ids)
-    cache = make_prompt_cache(model, max_kv_size)
+    generated_ids = list(cached_input_ids)
+    original_length = len(cached_input_ids)
     forward_start = time.perf_counter()
-    input_array = mx.array([input_ids])
+    input_array = mx.array([cached_input_ids])
     final_states, all_hidden_states = model(input_array, cache = cache, hidden_states = True)
     mx.eval([c.state for c in cache])
     mx.clear_cache()
@@ -153,7 +177,7 @@ def sledeminf_generate(model, tokenizer, input_ids, max_token = 2048, num_steps 
         if i % 1000 == 0:
             print(f"Sledeminf step {i+1}/{max_token}")
         try:
-            evolved_logits = sled_logits_from_hidden(model, all_hidden_states = all_hidden_states, optimized_logits = final_states[0,-1], k = 10, alpha = 1.2, lower_bound = -100.0, early_layers = None)
+            evolved_logits = sled_logits_from_hidden(model, all_hidden_states = all_hidden_states, optimized_logits = final_states[0,-1].astype(mx.float32), k = 10, alpha = 1.2, lower_bound = -100.0, early_layers = None)
             current_logits = evolved_logits
             initial_alpha = alpha
             initial_entropy = entropy_calculation(evolved_logits) 
@@ -221,12 +245,15 @@ def sledeminf_generate(model, tokenizer, input_ids, max_token = 2048, num_steps 
             print(f"SLEDEMINF error at step {i}: {e}")
             break
     return generated_ids[original_length:]
-def sledtemp_generate(model, tokenizer, input_ids, max_tokens=2048, alpha = 0.5, delta = 0.05, max_kv_size = None, bench = None):
-    generated_ids = list(input_ids)
-    original_length = len(input_ids)
-    cache = make_prompt_cache(model, max_kv_size)
+def sledtemp_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens=2048, alpha = 0.5, delta = 0.05, max_kv_size = None, bench = None, prompt_cache=None, use_cache=True):
+    # Get input IDs with cache optimization
+    model_key = getattr(model, "model_key", id(model))
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
+    
+    generated_ids = list(cached_input_ids)
+    original_length = len(cached_input_ids)
     forward_start = time.perf_counter()
-    input_array = mx.array([input_ids])
+    input_array = mx.array([cached_input_ids])
     final_states, all_hidden_states = model(input_array, cache = cache, hidden_states = True)
     mx.eval([c.state for c in cache])
     mx.clear_cache()
@@ -300,11 +327,14 @@ def eminf_optimize(logits, alpha=0.65, num_steps=None, threshold=0.05):
         else:
             break
     return best_logits, best_entropy
-def eminfsled_generate(model, tokenizer, input_ids, max_token=2048, num_steps=None, alpha=0.65, threshold=0.05, evolution_rate=1.2, evolution_scale=10, evolution_lower_bound=-100.0, max_kv_size=None, bench=None):
-    generated_ids = list(input_ids)
-    cache = make_prompt_cache(model, max_kv_size = None)
-    original_length = len(input_ids)
-    input_array = mx.array([input_ids])
+def eminfsled_generate(model, tokenizer, input_ids, input_ids_no_gen, max_token=2048, num_steps=None, alpha=0.65, threshold=0.05, evolution_rate=1.2, evolution_scale=10, evolution_lower_bound=-100.0, max_kv_size=None, bench=None, prompt_cache=None, use_cache=True):
+    # Get input IDs with cache optimization
+    model_key = getattr(model, "model_key", id(model))
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
+    
+    generated_ids = list(cached_input_ids)
+    original_length = len(cached_input_ids)
+    input_array = mx.array([cached_input_ids])
     final_states, all_hidden_states = model(input_array, cache = cache, hidden_states = True)
     mx.eval([c.state for c in cache])
     mx.clear_cache()
@@ -341,11 +371,14 @@ def eminfsled_generate(model, tokenizer, input_ids, max_token=2048, num_steps=No
             break
     return generated_ids[original_length:]
 
-def tempsled_generate(model, tokenizer, input_ids, max_tokens=2048, alpha = 0.5, delta = 0.05, max_kv_size = None, bench = None):
-    generated_ids = list(input_ids)
-    cache = make_prompt_cache(model, max_kv_size = None)
-    original_length = len(input_ids)
-    input_array = mx.array([input_ids])
+def tempsled_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens=2048, alpha = 0.5, delta = 0.05, max_kv_size = None, bench = None, prompt_cache=None, use_cache=True):
+    # Get input IDs with cache optimization
+    model_key = getattr(model, "model_key", id(model))
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
+    
+    generated_ids = list(cached_input_ids)
+    original_length = len(cached_input_ids)
+    input_array = mx.array([cached_input_ids])
     final_states, all_hidden_states = model(input_array, cache = cache, hidden_states = True)
     mx.eval([c.state for c in cache])
     mx.clear_cache()
@@ -369,13 +402,16 @@ def tempsled_generate(model, tokenizer, input_ids, max_tokens=2048, alpha = 0.5,
             break
     return generated_ids[original_length:]
 
-def eminf_generate(model, tokenizer, input_ids, max_token = 2048, num_steps = None, alpha = 0.65, threshold = 0.05, max_kv_size = None, bench=None):
-    generated_ids = list(input_ids)
-    original_length = len(input_ids)
-    cache = make_prompt_cache(model, max_kv_size)
+def eminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_token = 2048, num_steps = None, alpha = 0.65, threshold = 0.05, max_kv_size = None, bench=None, prompt_cache=None, use_cache=True):
+    # Get input IDs with cache optimization
+    model_key = getattr(model, "model_key", id(model))
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
+    
+    generated_ids = list(cached_input_ids)
+    original_length = len(cached_input_ids)
     
     forward_start = time.perf_counter()
-    output = model(mx.array([input_ids]), cache = cache, hidden_states = False)
+    output, _ = model(mx.array([cached_input_ids]), cache = cache, hidden_states = False)
     mx.eval([c.state for c in cache])
     mx.clear_cache()
 
@@ -402,7 +438,7 @@ def eminf_generate(model, tokenizer, input_ids, max_token = 2048, num_steps = No
             if next_token == tokenizer.eos_token_id:
                 break
             new_tokens = mx.array([[next_token]])
-            output2 = model(new_tokens, cache = cache, hidden_states = False)
+            output2, _ = model(new_tokens, cache = cache, hidden_states = False)
             mx.eval([c.state for c in cache])
             mx.clear_cache()
             if isinstance(output2, tuple):
@@ -448,10 +484,14 @@ def temp_scaling(logits, alpha=0.6, delta=0.05, max_init=1.99, min_init=0.01, it
     final_logits = logits/final_temp
     return final_logits
 
-def temp_generate(model, tokenizer, input_ids, max_tokens=4096, alpha=0.6, delta=0.05, max_kv_size=None, bench=None):
-    generated_ids = list(input_ids)
-    cache = make_prompt_cache(model, max_kv_size)
-    output = model(mx.array([input_ids]), cache = cache, hidden_states = False)
+def temp_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens=4096, alpha=0.6, delta=0.05, max_kv_size=None, bench=None, prompt_cache=None, use_cache=True):
+    # Get input IDs with cache optimization
+    model_key = getattr(model, "model_key", id(model))
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
+    
+    generated_ids = list(cached_input_ids)
+    original_length = len(cached_input_ids)
+    output, _ = model(mx.array([cached_input_ids]), cache = cache, hidden_states = False)
     mx.eval([c.state for c in cache])
     mx.clear_cache()
     
@@ -477,14 +517,14 @@ def temp_generate(model, tokenizer, input_ids, max_tokens=4096, alpha=0.6, delta
         generated_ids.append(next_token.item())
         
         new_tokens = mx.array([[next_token.item()]])
-        output2 = model(new_tokens, cache = cache, hidden_states = False)
+        output2, _ = model(new_tokens, cache = cache, hidden_states = False)
         mx.eval([c.state for c in cache])
         mx.clear_cache()
         if isinstance(output2, tuple):
             output2 = output2[0]
         output2 = mx.stop_gradient(output2)
         logits = output2[:, -1, :].astype(mx.float32)
-    return generated_ids
+    return generated_ids[original_length:]
 
 def project_logits(model, h_lastpos):
     """Project hidden states to logits using the model's output projection"""
@@ -549,14 +589,17 @@ def sled_logits_from_hidden(model,
     evolved = evolved.at[topk_idx].add(evolved_top - logitsN_top)
     return evolved
 
-def sled_generate(model, tokenizer, input_ids, max_tokens=2048, 
+def sled_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens=2048, 
                   evolution_rate=1.2, evolution_scale=10, evolution_lower_bound=-100, 
-                  max_kv_size=None, bench=None):
-    generated_ids = list(input_ids)
-    original_length = len(input_ids)
-    cache = make_prompt_cache(model, max_kv_size)
+                  max_kv_size=None, bench=None, prompt_cache=None, use_cache=True):
+    # Get input IDs with cache optimization
+    model_key = getattr(model, "model_key", id(model))
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
     
-    input_array = mx.array([input_ids])
+    generated_ids = list(cached_input_ids)
+    original_length = len(cached_input_ids)
+    
+    input_array = mx.array([cached_input_ids])
     final_hidden, all_hidden_states = model(
         input_array,
         cache=cache,
@@ -613,40 +656,43 @@ def gbxlm_generate(model, tokenizer, prompt, temperature, top_p, max_tokens, rep
     
     return str(response).strip()
 
-def generate_response(model, tokenizer, messages, model_name, bench=None):
+def generate_response(model, tokenizer, messages, model_name, bench=None, prompt_cache=None, use_cache=True):
     config = decoding_config[model_name]
     
     if bench:
         bench.start()
     
     input_ids = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking = False)
+    input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking = False)
         
     if config["use_eminf"]:
-        generated_ids = eminf_generate(model, tokenizer, input_ids, max_token = config["max_new_tokens"], bench=bench)
+        generated_ids = eminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_token = config["max_new_tokens"], bench=bench, prompt_cache=prompt_cache, use_cache=use_cache)
         response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
         response = response.strip()
     elif config["use_temp_scaling"]:
-        generated_ids = temp_generate(model, tokenizer, input_ids, max_tokens = config["max_new_tokens"], alpha = config["alpha"], delta = config["delta"], bench=bench)
+        generated_ids = temp_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens = config["max_new_tokens"], alpha = config["alpha"], delta = config["delta"], bench=bench, prompt_cache=prompt_cache, use_cache=use_cache)
         response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
         response = response.strip()
     elif config["use_sled"]:
         generated_ids = sled_generate(
-            model, tokenizer, input_ids, 
+            model, tokenizer, input_ids, input_ids_no_gen, 
             max_tokens=config["max_new_tokens"],
             evolution_rate=config["evolution_rate"],
             evolution_scale=config["evolution_scale"],
             evolution_lower_bound=config["evolution_lower_bound"],
-            bench=bench
+            bench=bench,
+            prompt_cache=prompt_cache,
+            use_cache=use_cache
         )
         response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
         response = response.strip()
     elif config["use_sledeminf"]:
-        generated_ids = sledeminf_generate(model, tokenizer, input_ids, max_token = config["max_new_tokens"], bench=bench)
+        generated_ids = sledeminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_token = config["max_new_tokens"], bench=bench, prompt_cache=prompt_cache, use_cache=use_cache)
         response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
         response = response.strip()
     elif config["use_eminfsled"]:
         generated_ids = eminfsled_generate(
-            model, tokenizer, input_ids, 
+            model, tokenizer, input_ids, input_ids_no_gen, 
             max_token=config["max_new_tokens"], 
             num_steps=config["num_steps"], 
             alpha=config["alpha"], 
@@ -654,16 +700,18 @@ def generate_response(model, tokenizer, messages, model_name, bench=None):
             evolution_rate=config.get("evolution_rate", 1.2),
             evolution_scale=config.get("evolution_scale", 10),
             evolution_lower_bound=config.get("evolution_lower_bound", -100.0),
-            bench=bench
+            bench=bench,
+            prompt_cache=prompt_cache,
+            use_cache=use_cache
         )
         response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
         response = response.strip()
     elif config["use_sledtemp"]:
-        generated_ids = sledtemp_generate(model, tokenizer, input_ids, max_tokens = config["max_new_tokens"], alpha = config["alpha"], delta = config["delta"], bench=bench)
+        generated_ids = sledtemp_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens = config["max_new_tokens"], alpha = config["alpha"], delta = config["delta"], bench=bench, prompt_cache=prompt_cache, use_cache=use_cache)
         response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
         response = response.strip()
     elif config["use_tempsled"]:
-        generated_ids = tempsled_generate(model, tokenizer, input_ids, max_tokens = config["max_new_tokens"], alpha = config["alpha"], delta = config["delta"], bench=bench)
+        generated_ids = tempsled_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens = config["max_new_tokens"], alpha = config["alpha"], delta = config["delta"], bench=bench, prompt_cache=prompt_cache, use_cache=use_cache)
         response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
         response = response.strip()
     if bench:

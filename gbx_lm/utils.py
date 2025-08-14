@@ -709,6 +709,9 @@ def calibrated_generate(
     method: str = None,
     verbose: bool = False,
     bench = None,
+    prompt_cache = None,
+    use_cache: bool = True,
+    system_prompt: str = None,
 ) -> str:
     """
     Generate text using various calibration methods.
@@ -727,21 +730,29 @@ def calibrated_generate(
             - "tempsled": Temperature scaling + SLED
         verbose (bool): If True, print generation progress.
         bench: Optional benchmarking object.
-        **method_kwargs: Additional arguments specific to the chosen method.
+        prompt_cache: Optional prompt cache for improved performance.
+        use_cache (bool): Whether to use prompt caching.
+        system_prompt (str): Optional system prompt to include.
     
     Returns:
         str: Generated text.
     """
     from .calibration import generate_response
+    
+    # Build messages list
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    
     if isinstance(prompt, str):
-        messages = [{"role": "user", "content": prompt}]
+        messages.append({"role": "user", "content": prompt})
     elif isinstance(prompt, list) and isinstance(prompt[0], int):
         text = tokenizer.decode(prompt)
-        messages = [{"role": "user", "content": text}]
+        messages.append({"role": "user", "content": text})
     else:
         raise ValueError("Prompt must be a string or list of token IDs")
 
-    response = generate_response(model, tokenizer, messages, method, bench=bench)
+    response = generate_response(model, tokenizer, messages, method, bench=bench, prompt_cache=prompt_cache, use_cache=use_cache)
     return response
 
 
