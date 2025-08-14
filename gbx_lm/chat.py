@@ -104,6 +104,7 @@ def main():
         if args.enable_cache and prompt_cache_obj:
             input_ids_with_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=True)
             input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=True)
+
             model_key = getattr(model, "model_key", id(model))
             tokens_to_process, cache, cache_hit = prompt_cache_obj.get_prompt_cache(
                 model, input_ids_with_gen, input_ids_no_gen, model_key
