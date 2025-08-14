@@ -240,6 +240,7 @@ class GptOssMoeModel(nn.Module):
         mask: mx.array = None,
         cache=None,
         input_embeddings: Optional[mx.array] = None,
+        output_hidden_states = False
     ):
         if input_embeddings is not None:
             x = input_embeddings
@@ -248,7 +249,9 @@ class GptOssMoeModel(nn.Module):
 
         if cache is None:
             cache = [None] * len(self.layers)
-
+        hidden_states = []
+        if output_hidden_states:
+            hidden_states.append(x)
         if mask is None:
             full_mask = create_attention_mask(x, cache[1:2], return_array=True)
             sliding_window_mask = create_attention_mask(x, cache, return_array=True)
@@ -263,8 +266,14 @@ class GptOssMoeModel(nn.Module):
                 local_mask = mx.array([True], dtype=mx.bool_)
 
             x = layer(x, local_mask, c)
+            if output_hidden_states:
+                hidden_states.append(x)
         x = self.norm(x)
-        return x
+        if output_hidden_states:
+            hidden_states.append(x)
+            return x, tuple(hidden_states)
+        else:
+            return x
     
 
 class Model(nn.Module):
@@ -278,9 +287,16 @@ class Model(nn.Module):
         self.lm_head = nn.Linear(args.hidden_size, args.vocab_size, bias=False)
 
     def __call__(self, inputs: mx.array, mask: mx.array = None, cache=None, hidden_states=False):
-        out = self.model(inputs, mask, cache)
-        out = (self.lm_head(out), out) if hidden_states else self.lm_head(out)
-        return out
+        if hidden_states:
+            out, all_hidden_states = self.model(inputs, mask, cache, output_hidden_states=True)
+        else:
+            out = self.model(inputs, mask, cache)
+        logits = self.lm_head(out)
+        
+        if hidden_states:
+            return logits, all_hidden_states
+        else:
+            return logits
 
     def sanitize(self, weights):
         """

@@ -172,6 +172,7 @@ class Phi3Model(nn.Module):
         inputs: mx.array,
         mask: mx.array = None,
         cache=None,
+        output_hidden_states = False
     ):
         h = self.embed_tokens(inputs)
 
@@ -181,10 +182,21 @@ class Phi3Model(nn.Module):
         if cache is None:
             cache = [None] * len(self.layers)
 
+        hidden_states = []
+        if output_hidden_states:
+            hidden_states.append(h)
+
         for layer, c in zip(self.layers, cache):
             h = layer(h, mask, c)
+            if output_hidden_states:
+                hidden_states.append(h)
 
-        return self.norm(h)
+        final_h = self.norm(h)
+        if output_hidden_states:
+            hidden_states.append(final_h)
+            return final_h, tuple(hidden_states)
+        else:
+            return final_h
 
 
 class Model(nn.Module):
@@ -202,9 +214,17 @@ class Model(nn.Module):
         cache=None,
         hidden_states=False
     ):
-        out = self.model(inputs, mask, cache)
-        out = (self.lm_head(out), out) if hidden_states else self.lm_head(out)
-        return out
+        if hidden_states:
+            out, all_hidden_states = self.model(inputs, mask, cache, output_hidden_states=True)
+        else:
+            out = self.model(inputs, mask, cache, output_hidden_states=False)
+            
+        logits = self.lm_head(out)
+        
+        if hidden_states:
+            return logits, all_hidden_states
+        else:
+            return logits
 
     @property
     def layers(self):
