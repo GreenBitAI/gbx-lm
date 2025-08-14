@@ -54,6 +54,24 @@ UE_MODELS = {
 }
 _confidence_scorers = {}
 
+
+def calculate_cached_tokens(prompt, prompt_cache_key: Optional[str] = None) -> int:
+    """
+    占位函数：计算缓存的token数量
+    TODO: 实现具体的prompt caching逻辑
+
+    Args:
+        prompt: 输入的prompt
+        prompt_cache_key: 可选的缓存键
+    Returns:
+        int: 缓存的token数量（当前返回0作为占位）
+    """
+    # 占位逻辑：实际功能需要根据prompt前缀匹配算法实现
+    if len(prompt) >= 1024 and prompt_cache_key:
+        # 模拟缓存命中情况，返回示例数值
+        return max(0, len(prompt) - 128)  # 占位：假设除了最后128个token都被缓存
+    return 0
+
 def setup_logging():
     """Configure logging for the FastAPI server."""
     if not os.path.exists(LOG_DIR):
@@ -437,6 +455,7 @@ class CompletionRequest(BaseModel):
     repetition_context_size: int = 20
     with_hidden_states: bool = False
     remote_score: bool = True
+    prompt_cache_key: Optional[str] = None
 
 class ChatCompletionRequest(BaseModel):
     model: str
@@ -452,6 +471,7 @@ class ChatCompletionRequest(BaseModel):
     with_hidden_states: bool = False
     remote_score: bool = True
     enable_thinking: Optional[bool] = None  # Qwen3 Model only feature
+    prompt_cache_key: Optional[str] = None
 
 
 async def stream_completion(prompt, request, model, tokenizer):
@@ -530,9 +550,12 @@ async def stream_completion(prompt, request, model, tokenizer):
             }
         ],
         "usage": {
-            "input_tokens": len(prompt),
-            "output_tokens": len(tokens),
-            "total_tokens": len(prompt) + len(tokens)
+            "prompt_tokens": len(prompt),
+            "completion_tokens": len(tokens),
+            "total_tokens": len(prompt) + len(tokens),
+            "prompt_tokens_details": {
+                "cached_tokens": calculate_cached_tokens(prompt, request.prompt_cache_key)  # 占位函数
+            }
         }
     }
     yield f"data: {json.dumps(final_response)}\n\n"
@@ -612,9 +635,12 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
             }
         ],
         "usage": {
-            "input_tokens": len(prompt),
-            "output_tokens": len(tokens),
-            "total_tokens": len(prompt) + len(tokens)
+            "prompt_tokens": len(prompt),
+            "completion_tokens": len(tokens),
+            "total_tokens": len(prompt) + len(tokens),
+            "prompt_tokens_details": {
+                "cached_tokens": calculate_cached_tokens(prompt, request.prompt_cache_key)  # 占位函数
+            }
         }
     }
     yield f"data: {json.dumps(final_response)}\n\n"
@@ -724,9 +750,12 @@ async def generate_completion(prompt, request, model, tokenizer):
                 }
             ],
             "usage": {
-                "input_tokens": len(prompt),
-                "output_tokens": len(tokens),
+                "prompt_tokens": len(prompt),
+                "completion_tokens": len(tokens),
                 "total_tokens": len(prompt) + len(tokens),
+                "prompt_tokens_details": {
+                    "cached_tokens": calculate_cached_tokens(prompt, request.prompt_cache_key)  # 占位函数
+                }
             },
         }
     except Exception as e:
@@ -803,9 +832,12 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
                 }
             ],
             "usage": {
-                "input_tokens": len(prompt),
-                "output_tokens": len(tokens),
+                "prompt_tokens": len(prompt),
+                "completion_tokens": len(tokens),
                 "total_tokens": len(prompt) + len(tokens),
+                "prompt_tokens_details": {
+                    "cached_tokens": calculate_cached_tokens(prompt, request.prompt_cache_key)  # 占位函数
+                }
             },
         }
     except Exception as e:
