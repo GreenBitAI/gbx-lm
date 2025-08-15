@@ -296,7 +296,7 @@ class ModelProvider:
 
             # Pre-cache default_system_prompt
             default_key = "base_default-assistant-v1"
-            if default_key not in _prompt_caches:
+            if default_key not in _prompt_caches and server_config is not None:
                 try:
                     prompt_cache_obj = PromptCache()
                     prompt_cache_obj.cache_system_prompt(model, server_config.default_system_prompt, tokenizer)
@@ -322,8 +322,22 @@ def create_app(args):
     """Create and configure the FastAPI application with routes."""
 
     # Initialize logging
-    global logger
+    global logger, server_config
     logger = setup_logging()
+
+    # Create server config with all arguments
+    server_config = ServerConfig(
+        host=args.host,
+        port=args.port,
+        model=args.model,
+        model_list=args.model_list,
+        adapter_path=args.adapter_path,
+        trust_remote_code=args.trust_remote_code,
+        chat_template=args.chat_template,
+        use_default_chat_template=args.use_default_chat_template,
+        eos_token=args.eos_token,
+        default_system_prompt=args.default_system_prompt
+    )
 
     try:
         from .routing import ConfidenceScorer
@@ -357,20 +371,6 @@ def create_app(args):
         except Exception as e:
             logger.error(f"Request failed: {str(e)}")
             raise
-
-    # Create server config with all arguments
-    server_config = ServerConfig(
-        host=args.host,
-        port=args.port,
-        model=args.model,
-        model_list=args.model_list,
-        adapter_path=args.adapter_path,
-        trust_remote_code=args.trust_remote_code,
-        chat_template=args.chat_template,
-        use_default_chat_template=args.use_default_chat_template,
-        eos_token=args.eos_token,
-        default_system_prompt=args.default_system_prompt
-    )
 
     # Initialize model provider
     model_provider = ModelProvider(server_config.model_config)
@@ -669,7 +669,6 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
                         f"Session Cache HIT for "
                         f"'{request.prompt_cache_key}'! "
                         f"Processing {len(tokens_to_process)}/{original_prompt_len} tokens")
-                    tokens_to_process = mx.array(tokens_to_process)
                 else:
                     logger.info(
                         f"Session Cache MISS for "
@@ -679,6 +678,9 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
         except Exception as e:
             logger.warning(f"Prompt cache failed for '{request.prompt_cache_key}': {e}")
             cache_hit = False
+
+    if not isinstance(tokens_to_process, mx.array):
+        tokens_to_process = mx.array(tokens_to_process)
 
     return tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len
 
