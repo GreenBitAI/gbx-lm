@@ -1,4 +1,5 @@
-from mlx_lm.models.cache import can_trim_prompt_cache, make_prompt_cache, trim_prompt_cache
+import mlx.core as mx
+from gbx_lm.models.cache import can_trim_prompt_cache, make_prompt_cache, trim_prompt_cache
 
 class PromptCache:
     """
@@ -46,7 +47,6 @@ class PromptCache:
         self.model_key = model_key
 
         # pre-compute the system prompt through the model: pre-cache system prompt
-        import mlx.core as mx
         system_array = mx.array([self.system_tokens])
         model(system_array, cache=self.cache)
         mx.eval([c.state for c in self.cache])
