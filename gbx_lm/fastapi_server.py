@@ -13,6 +13,7 @@ import argparse
 import json
 import time
 import uuid
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Set
 
@@ -24,6 +25,7 @@ import asyncio
 
 from .utils import generate_step, load
 from .sample_utils import make_sampler
+from .prompt_cache import PromptCache
 
 # Try to import mlx_lm for mlx-community models
 try:
@@ -52,7 +54,64 @@ UE_MODELS = {
     "qwen-2.5-7b": "qwen2.5",
     "llama-3-8b": "llama-3"
 }
+
 _confidence_scorers = {}
+
+# Format：{(model_path, adapter_path, system_prompt_hash): PromptCache}
+_prompt_caches = {}
+
+
+def get_system_prompt_from_messages(messages: List[Dict[str, str]]) -> Optional[str]:
+    """Extract the system prompt from the message list"""
+    for msg in messages:
+        if msg.get("role") == "system":
+            return msg.get("content", "")
+    return None
+
+def generate_semantic_cache_key(system_prompt: str, custom_prefix: Optional[str] = None) -> str:
+    """
+    Generate semantic cache keys according to system prompt
+    Format：[prefix-]semantic-version-hash
+    """
+    # Creating stable short hashes
+    prompt_hash = hashlib.sha256(system_prompt.encode('utf-8')).hexdigest()[:8]
+
+    # semantic recognition
+    lower_prompt = system_prompt.lower()
+    semantic_id = "assistant"  # default
+
+    if any(word in lower_prompt for word in ["code", "coding", "programming", "developer", "python", "javascript"]):
+        semantic_id = "coding-assistant"
+    elif any(word in lower_prompt for word in ["customer", "support", "service", "help"]):
+        semantic_id = "customer-service"
+    elif any(word in lower_prompt for word in ["translate", "translation", "language"]):
+        semantic_id = "translation-bot"
+    elif any(word in lower_prompt for word in ["write", "writing", "content", "article"]):
+        semantic_id = "writing-assistant"
+    elif any(word in lower_prompt for word in ["analyze", "analysis", "data", "research"]):
+        semantic_id = "analysis-bot"
+    elif any(word in lower_prompt for word in ["math", "mathematics", "calculation", "solve"]):
+        semantic_id = "math-tutor"
+
+    # Generate the final key
+    if custom_prefix:
+        return f"{custom_prefix}-{semantic_id}-v1-{prompt_hash}"
+    else:
+        return f"{semantic_id}-v1-{prompt_hash}"
+
+def calculate_cached_tokens(
+        tokens_processed: int,
+        total_tokens: int,
+        cache_hit: bool,
+) -> int:
+    """Calculate the number of cached tokens, in accordance with OpenAI's 128 increment rule"""
+    if not cache_hit or total_tokens < 1024:
+        return 0
+
+    # Calculate the actual cached tokens
+    cached_tokens = total_tokens - tokens_processed
+    # Align by 128 increments (in accordance with OpenAI rules)
+    return max(1024, (cached_tokens // 128) * 128)
 
 def setup_logging():
     """Configure logging for the FastAPI server."""
@@ -139,6 +198,8 @@ def parse_args():
     parser.add_argument("--use_default_chat_template", action="store_true", help="Use the default chat template")
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
     parser.add_argument("--ue_parameter_path", type=str, default="db/router.db", help="Path to the method parameters database")
+    parser.add_argument("--default_system_prompt", type=str, default="You are a helpful AI assistant.",
+                        help="Default system prompt for caching")
     return parser.parse_args()
 
 
@@ -151,8 +212,11 @@ class ServerConfig:
         # to ensure thread safe
         self.model_locks = {}
 
+        self.default_system_prompt = kwargs.get("default_system_prompt", "You are a helpful AI assistant.")
+
         # Store the list of models to serve
         self.models_to_serve: Set[str] = set()
+
         if kwargs.get("model_list"):
             self.models_to_serve.update(kwargs["model_list"])
         elif kwargs.get("model"):
@@ -229,6 +293,18 @@ class ModelProvider:
                     tokenizer.chat_template = tokenizer.default_chat_template
 
             self.model_cache[cache_key] = (model, tokenizer)
+
+            # Pre-cache default_system_prompt
+            default_key = "base_default-assistant-v1"
+            if default_key not in _prompt_caches and server_config is not None:
+                try:
+                    prompt_cache_obj = PromptCache()
+                    prompt_cache_obj.cache_system_prompt(model, server_config.default_system_prompt, tokenizer)
+                    _prompt_caches[default_key] = prompt_cache_obj
+                    logger.info(f"Pre-cached default system prompt with key: {default_key}")
+                except Exception as e:
+                    logger.warning(f"Failed to pre-cache default system prompt: {e}")
+
             logger.info(f"Successfully loaded model from {model_path}")
             return model, tokenizer
         except Exception as e:
@@ -246,8 +322,22 @@ def create_app(args):
     """Create and configure the FastAPI application with routes."""
 
     # Initialize logging
-    global logger
+    global logger, server_config
     logger = setup_logging()
+
+    # Create server config with all arguments
+    server_config = ServerConfig(
+        host=args.host,
+        port=args.port,
+        model=args.model,
+        model_list=args.model_list,
+        adapter_path=args.adapter_path,
+        trust_remote_code=args.trust_remote_code,
+        chat_template=args.chat_template,
+        use_default_chat_template=args.use_default_chat_template,
+        eos_token=args.eos_token,
+        default_system_prompt=args.default_system_prompt
+    )
 
     try:
         from .routing import ConfidenceScorer
@@ -281,19 +371,6 @@ def create_app(args):
         except Exception as e:
             logger.error(f"Request failed: {str(e)}")
             raise
-
-    # Create server config with all arguments
-    server_config = ServerConfig(
-        host=args.host,
-        port=args.port,
-        model=args.model,
-        model_list=args.model_list,
-        adapter_path=args.adapter_path,
-        trust_remote_code=args.trust_remote_code,
-        chat_template=args.chat_template,
-        use_default_chat_template=args.use_default_chat_template,
-        eos_token=args.eos_token
-    )
 
     # Initialize model provider
     model_provider = ModelProvider(server_config.model_config)
@@ -385,7 +462,9 @@ def create_app(args):
                 "models": list(server_config.models_to_serve),
                 "endpoints": [
                     "/v1/completions",
-                    "/v1/chat/completions"
+                    "/v1/chat/completions",
+                    "/v1/models",
+                    "/v1/prompt_cache_key"
                 ]
             }
         except Exception as e:
@@ -413,6 +492,68 @@ def create_app(args):
             logger.error(f"Models list request failed: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
+    @app.post("/v1/prompt_cache_key")
+    async def get_prompt_cache_key(request: SystemPromptCacheKeyRequest):
+        """
+        Generates a suggested prompt_cache_key based on the system prompt.
+        This is a helper API that helps users generate semantic cache keys.
+        """
+        try:
+            suggested_key = generate_semantic_cache_key(
+                request.system_prompt,
+                request.custom_prefix
+            )
+
+            # Generate basic hash for display
+            prompt_hash = hashlib.sha256(request.system_prompt.encode('utf-8')).hexdigest()[:8]
+
+            return {
+                "suggested_prompt_cache_key": suggested_key,
+                "system_prompt_hash": prompt_hash,
+                "examples": [
+                    "base_default-assistant-v1",
+                    "customer-service-v1-def67890",
+                    "writing-assistant-v1-ghi11121"
+                ],
+                "note": "Use this suggested key in your chat completions API calls. You can also create your own custom keys."
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to generate prompt cache key: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @app.get("/v1/prompt_cache_status")
+    async def get_prompt_cache_status():
+        """View the current prompt cache status"""
+        try:
+            base_caches = []
+            session_caches = []
+
+            for cache_key, prompt_cache_obj in _prompt_caches.items():
+                cache_info = {
+                    "cache_key": cache_key,
+                    "system_cached": prompt_cache_obj.system_cached,
+                    "system_tokens_count": len(prompt_cache_obj.system_tokens),
+                    "conversation_tokens_count": len(prompt_cache_obj.tokens_no_gen)
+                }
+
+                if cache_key.startswith("base_"):
+                    cache_info["is_default"] = cache_key == "base_libra-system_prompt-v1"
+                    base_caches.append(cache_info)
+                elif cache_key.startswith("session_"):
+                    session_caches.append(cache_info)
+
+            return {
+                "total_caches": len(_prompt_caches),
+                "default_system_prompt": server_config.default_system_prompt,
+                "base_caches": base_caches,
+                "session_caches": session_caches,
+                "cache_strategy": "Two-tier: base caches preserve clean system prompts, session caches handle conversations"
+            }
+        except Exception as e:
+            logger.error(f"Failed to get cache status: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request, exc):
         logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
@@ -438,6 +579,7 @@ class CompletionRequest(BaseModel):
     with_hidden_states: bool = False
     remote_score: bool = True
 
+
 class ChatCompletionRequest(BaseModel):
     model: str
     messages: List[Dict[str, str]]
@@ -452,7 +594,95 @@ class ChatCompletionRequest(BaseModel):
     with_hidden_states: bool = False
     remote_score: bool = True
     enable_thinking: Optional[bool] = None  # Qwen3 Model only feature
+    prompt_cache_key: Optional[str] = None
 
+
+class SystemPromptCacheKeyRequest(BaseModel):
+    system_prompt: str
+    custom_prefix: Optional[str] = None
+
+
+def handle_prompt_cache(request, model, tokenizer, prompt):
+    """
+    Handling the prompt cache's hierarchical caching logic
+
+    Returns:
+        tuple: (tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len)
+    """
+    cache_hit = False
+    tokens_to_process = prompt
+    prompt_cache = None
+    original_prompt_len = len(prompt)
+    session_cache_obj = None
+
+    if request.prompt_cache_key:
+        try:
+            system_prompt = get_system_prompt_from_messages(request.messages)
+
+            if system_prompt:
+                # Step 1: Get or create the basic system prompt cache
+                base_cache_key = f"base_{request.prompt_cache_key}"
+                base_cache_obj = _prompt_caches.get(base_cache_key)
+
+                if base_cache_obj is None:
+                    # Create a new basic cache (only contains the system prompt)
+                    base_cache_obj = PromptCache()
+                    base_cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
+                    _prompt_caches[base_cache_key] = base_cache_obj
+                    logger.info(f"Created base cache for key: {base_cache_key}")
+
+                # Step 2: Create a session cache for this specific conversation
+                # Use the message content hash to distinguish different conversation sessions
+                messages_hash = hashlib.md5(
+                    json.dumps(request.messages, sort_keys=True).encode('utf-8')
+                ).hexdigest()[:8]
+                session_cache_key = f"session_{request.prompt_cache_key}_{messages_hash}"
+
+                session_cache_obj = _prompt_caches.get(session_cache_key)
+
+                if session_cache_obj is None:
+                    # Create a new session cache, starting from the base cache
+                    session_cache_obj = PromptCache()
+                    # Copy the status of the base cache
+                    session_cache_obj.cache = None # will be created in get_prompt_cache
+                    session_cache_obj.model_key = base_cache_obj.model_key
+                    session_cache_obj.system_cached = base_cache_obj.system_cached
+                    session_cache_obj.system_tokens = base_cache_obj.system_tokens.copy()
+                    session_cache_obj.tokens_no_gen = base_cache_obj.tokens_no_gen.copy()
+
+                    _prompt_caches[session_cache_key] = session_cache_obj
+                    logger.info(f"Created session cache based on base cache: {session_cache_key}")
+
+                # Use session cache for cache matching
+                tokens_no_gen = tokenizer.apply_chat_template(
+                    request.messages, add_generation_prompt=False, enable_thinking=False
+                )
+                tokens_with_gen = list(prompt)
+                model_key = getattr(model, "model_key", id(model))
+
+                tokens_to_process, prompt_cache, cache_hit = session_cache_obj.get_prompt_cache(
+                    model, tokens_with_gen, tokens_no_gen, model_key
+                )
+
+                if cache_hit:
+                    logger.info(
+                        f"Session Cache HIT for "
+                        f"'{request.prompt_cache_key}'! "
+                        f"Processing {len(tokens_to_process)}/{original_prompt_len} tokens")
+                else:
+                    logger.info(
+                        f"Session Cache MISS for "
+                        f"'{request.prompt_cache_key}' - processing all {original_prompt_len} tokens")
+            else:
+                logger.warning(f"prompt_cache_key provided but no system prompt found")
+        except Exception as e:
+            logger.warning(f"Prompt cache failed for '{request.prompt_cache_key}': {e}")
+            cache_hit = False
+
+    if not isinstance(tokens_to_process, mx.array):
+        tokens_to_process = mx.array(tokens_to_process)
+
+    return tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len
 
 async def stream_completion(prompt, request, model, tokenizer):
     created = int(time.time())
@@ -530,8 +760,8 @@ async def stream_completion(prompt, request, model, tokenizer):
             }
         ],
         "usage": {
-            "input_tokens": len(prompt),
-            "output_tokens": len(tokens),
+            "prompt_tokens": len(prompt),
+            "completion_tokens": len(tokens),
             "total_tokens": len(prompt) + len(tokens)
         }
     }
@@ -547,20 +777,27 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     detokenizer.reset()
     tokens = []
     is_first_chunk = True
+    generated_text_parts = []
 
     stop_id_sequences = []
     if request.stop:
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
+    # Using cache processing functions
+    tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len = handle_prompt_cache(
+        request, model, tokenizer, prompt
+    )
+
     async for (token, _, hidden_states) in async_generate_step(
-            prompt=prompt,
+            prompt=tokens_to_process,
             model=model,
             tokenizer=tokenizer,
             temp=request.temperature,
             top_p=request.top_p,
             with_hidden_states=request.with_hidden_states,
-            max_tokens=request.max_tokens
+            max_tokens=request.max_tokens,
+            prompt_cache=prompt_cache
     ):
         detokenizer.add_token(token)
         tokens.append(token)
@@ -573,6 +810,8 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
             continue
 
         new_text = detokenizer.last_segment
+        generated_text_parts.append(new_text)
+
         response = {
             "id": request_id,
             "object": "chat.completion.chunk",
@@ -589,14 +828,35 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
 
         # Add usage info in first chunk
         if is_first_chunk:
+            # Calculate cache token number
+            cached_tokens = calculate_cached_tokens(
+                len(tokens_to_process), original_prompt_len, cache_hit
+            )
             response["usage"] = {
-                "input_tokens": len(prompt),
+                "input_tokens": original_prompt_len,
                 "output_tokens": len(tokens),
-                "total_tokens": len(prompt) + len(tokens)
+                "total_tokens": original_prompt_len + len(tokens),
+                "prompt_tokens_details": {
+                    "cached_tokens": cached_tokens
+                }
             }
             is_first_chunk = False
 
         yield f"data: {json.dumps(response)}\n\n"
+
+    # Update the cache status after the generation is completed
+    generated_text = "".join(generated_text_parts)
+    if request.prompt_cache_key and cache_hit and session_cache_obj:
+        try:
+            updated_messages = request.messages + [{"role": "assistant", "content": generated_text}]
+            session_cache_obj.update_after_step(updated_messages, tokenizer)
+        except Exception as e:
+            logger.warning(f"Failed to update stream prompt cache: {e}")
+
+    # Calculate the final number of cache tokens
+    cached_tokens = calculate_cached_tokens(
+        len(tokens_to_process), original_prompt_len, cache_hit
+    )
 
     # Final chunk with complete usage stats
     final_response = {
@@ -612,16 +872,19 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
             }
         ],
         "usage": {
-            "input_tokens": len(prompt),
-            "output_tokens": len(tokens),
-            "total_tokens": len(prompt) + len(tokens)
+            "prompt_tokens": original_prompt_len,
+            "completion_tokens": len(tokens),
+            "total_tokens": original_prompt_len + len(tokens),
+            "prompt_tokens_details": {
+                "cached_tokens": cached_tokens
+            }
         }
     }
     yield f"data: {json.dumps(final_response)}\n\n"
     yield "data: [DONE]\n\n"
 
 
-async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens):
+async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens, prompt_cache=None):
     """Wrap the synchronous generate_step as an async generator."""
     sampler = make_sampler(temp, top_p)
 
@@ -650,6 +913,7 @@ async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden
             max_tokens=max_tokens,
             sampler=sampler,
             with_hidden_states=with_hidden_states,
+            prompt_cache=prompt_cache,
         ):
             if token in tokenizer.eos_token_ids:
                 break
@@ -724,15 +988,17 @@ async def generate_completion(prompt, request, model, tokenizer):
                 }
             ],
             "usage": {
-                "input_tokens": len(prompt),
-                "output_tokens": len(tokens),
+                "prompt_tokens": len(prompt),
+                "completion_tokens": len(tokens),
                 "total_tokens": len(prompt) + len(tokens),
+                "prompt_tokens_details": {
+                    "cached_tokens": 0  # completions doesn't support cache yet.
+                }
             },
         }
     except Exception as e:
         logger.error(f"Async completion generation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 async def generate_chat_completion(prompt, request, model, tokenizer):
     created = int(time.time())
@@ -748,15 +1014,20 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
+    tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len = handle_prompt_cache(
+        request, model, tokenizer, prompt
+    )
+
     try:
         async for (token, _, hidden_states) in async_generate_step(
-                prompt=prompt,
+                prompt=tokens_to_process,
                 model=model,
                 tokenizer=tokenizer,
                 temp=request.temperature,
                 top_p=request.top_p,
                 with_hidden_states=request.with_hidden_states,
-                max_tokens=request.max_tokens
+                max_tokens=request.max_tokens,
+                prompt_cache=prompt_cache
         ):
             detokenizer.add_token(token)
             tokens.append(token)
@@ -769,6 +1040,15 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
 
         detokenizer.finalize()
         text = detokenizer.text
+
+        # update prompt cache state
+        if request.prompt_cache_key and cache_hit and session_cache_obj:
+            try:
+                # Add assistant response to messages and update cache
+                updated_messages = request.messages + [{"role": "assistant", "content": text}]
+                session_cache_obj.update_after_step(updated_messages, tokenizer)
+            except Exception as e:
+                logger.warning(f"Failed to update prompt cache: {e}")
 
         score = None
         if request.with_hidden_states and hidden_states is not None:
@@ -784,6 +1064,11 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
 
         # Convert hidden states to regular Python lists before JSON serialization
         serializable_hidden_states = convert_hidden_states_to_list(all_hidden_states)
+
+        # Calculate cache token number
+        cached_tokens = calculate_cached_tokens(
+            len(tokens_to_process), original_prompt_len, cache_hit
+        )
 
         return {
             "id": request_id,
@@ -803,9 +1088,12 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
                 }
             ],
             "usage": {
-                "input_tokens": len(prompt),
-                "output_tokens": len(tokens),
-                "total_tokens": len(prompt) + len(tokens),
+                "prompt_tokens": original_prompt_len,
+                "completion_tokens": len(tokens),
+                "total_tokens": original_prompt_len + len(tokens),
+                "prompt_tokens_details": {
+                    "cached_tokens": cached_tokens
+                }
             },
         }
     except Exception as e:
