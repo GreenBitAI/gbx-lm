@@ -76,22 +76,7 @@ def generate_semantic_cache_key(system_prompt: str, custom_prefix: Optional[str]
     # Creating stable short hashes
     prompt_hash = hashlib.sha256(system_prompt.encode('utf-8')).hexdigest()[:8]
 
-    # semantic recognition
-    lower_prompt = system_prompt.lower()
-    semantic_id = "assistant"  # default
-
-    if any(word in lower_prompt for word in ["code", "coding", "programming", "developer", "python", "javascript"]):
-        semantic_id = "coding-assistant"
-    elif any(word in lower_prompt for word in ["customer", "support", "service", "help"]):
-        semantic_id = "customer-service"
-    elif any(word in lower_prompt for word in ["translate", "translation", "language"]):
-        semantic_id = "translation-bot"
-    elif any(word in lower_prompt for word in ["write", "writing", "content", "article"]):
-        semantic_id = "writing-assistant"
-    elif any(word in lower_prompt for word in ["analyze", "analysis", "data", "research"]):
-        semantic_id = "analysis-bot"
-    elif any(word in lower_prompt for word in ["math", "mathematics", "calculation", "solve"]):
-        semantic_id = "math-tutor"
+    semantic_id = "assistant"  # this variable could be extended later
 
     # Generate the final key
     if custom_prefix:
@@ -295,7 +280,7 @@ class ModelProvider:
             self.model_cache[cache_key] = (model, tokenizer)
 
             # Pre-cache default_system_prompt
-            default_key = "base_default-assistant-v1"
+            default_key = "default-assistant-v1"
             if default_key not in _prompt_caches and server_config is not None:
                 try:
                     prompt_cache_obj = PromptCache()
@@ -510,11 +495,6 @@ def create_app(args):
             return {
                 "suggested_prompt_cache_key": suggested_key,
                 "system_prompt_hash": prompt_hash,
-                "examples": [
-                    "base_default-assistant-v1",
-                    "customer-service-v1-def67890",
-                    "writing-assistant-v1-ghi11121"
-                ],
                 "note": "Use this suggested key in your chat completions API calls. You can also create your own custom keys."
             }
 
@@ -526,29 +506,24 @@ def create_app(args):
     async def get_prompt_cache_status():
         """View the current prompt cache status"""
         try:
-            base_caches = []
-            session_caches = []
+            cache_info = []
 
             for cache_key, prompt_cache_obj in _prompt_caches.items():
-                cache_info = {
-                    "cache_key": cache_key,
+                info = {
+                    "prompt_cache_key": cache_key,
                     "system_cached": prompt_cache_obj.system_cached,
                     "system_tokens_count": len(prompt_cache_obj.system_tokens),
-                    "conversation_tokens_count": len(prompt_cache_obj.tokens_no_gen)
+                    "conversation_tokens_count": len(prompt_cache_obj.tokens_no_gen),
+                    "is_default": cache_key == "default-assistant-v1"
                 }
-
-                if cache_key.startswith("base_"):
-                    cache_info["is_default"] = cache_key == "base_libra-system_prompt-v1"
-                    base_caches.append(cache_info)
-                elif cache_key.startswith("session_"):
-                    session_caches.append(cache_info)
+                cache_info.append(info)
 
             return {
                 "total_caches": len(_prompt_caches),
                 "default_system_prompt": server_config.default_system_prompt,
-                "base_caches": base_caches,
-                "session_caches": session_caches,
-                "cache_strategy": "Two-tier: base caches preserve clean system prompts, session caches handle conversations"
+                "default_cache_key": "default-assistant-v1",
+                "caches": cache_info,
+                "note": "Each prompt_cache_key maintains one PromptCache that intelligently handles conversation history"
             }
         except Exception as e:
             logger.error(f"Failed to get cache status: {str(e)}")
@@ -602,18 +577,55 @@ class SystemPromptCacheKeyRequest(BaseModel):
     custom_prefix: Optional[str] = None
 
 
+def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
+    """
+    从已有的PromptCache创建一个新的副本，避免重复计算system prompt
+
+    Args:
+        source_cache_obj: 源PromptCache对象
+        model: 目标模型
+    Returns:
+        PromptCache: 新的PromptCache副本
+    """
+    new_cache_obj = PromptCache()
+
+    new_cache_obj.model_key = source_cache_obj.model_key
+    new_cache_obj.system_cached = source_cache_obj.system_cached
+    new_cache_obj.system_tokens = source_cache_obj.system_tokens.copy()
+    new_cache_obj.tokens_no_gen = source_cache_obj.tokens_no_gen.copy()
+
+    try:
+        from .models.cache import make_prompt_cache
+        new_cache_obj.cache = make_prompt_cache(model)
+
+        if source_cache_obj.cache and source_cache_obj.system_cached:
+            # copy each layer cache state
+            for i, (src_cache, new_cache) in enumerate(zip(source_cache_obj.cache, new_cache_obj.cache)):
+                if hasattr(src_cache, 'state') and hasattr(new_cache, 'state'):
+                    # copy KV cache state
+                    new_cache.state = [mx.array(state) for state in src_cache.state]
+                    new_cache.offset = src_cache.offset
+
+            logger.info(f"Successfully copied cache state without recomputation")
+
+    except Exception as e:
+        logger.warning(f"Failed to copy cache state, falling back to recomputation: {e}")
+        new_cache_obj.cache = None
+
+    return new_cache_obj
+
 def handle_prompt_cache(request, model, tokenizer, prompt):
     """
     Handling the prompt cache's hierarchical caching logic
 
     Returns:
-        tuple: (tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len)
+        tuple: (tokens_to_process, prompt_cache, cache_hit, cache_obj, original_prompt_len)
     """
     cache_hit = False
     tokens_to_process = prompt
     prompt_cache = None
     original_prompt_len = len(prompt)
-    session_cache_obj = None
+    cache_obj = None
 
     if request.prompt_cache_key:
         try:
@@ -621,58 +633,55 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
 
             if system_prompt:
                 # Step 1: Get or create the basic system prompt cache
-                base_cache_key = f"base_{request.prompt_cache_key}"
-                base_cache_obj = _prompt_caches.get(base_cache_key)
+                cache_obj = _prompt_caches.get(request.prompt_cache_key)
 
-                if base_cache_obj is None:
-                    # Create a new basic cache (only contains the system prompt)
-                    base_cache_obj = PromptCache()
-                    base_cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
-                    _prompt_caches[base_cache_key] = base_cache_obj
-                    logger.info(f"Created base cache for key: {base_cache_key}")
+                if cache_obj is None:
+                    # 检查是否有相同system prompt的现有缓存可以复用
+                    existing_cache_for_same_prompt = None
+                    for existing_key, existing_cache in _prompt_caches.items():
+                        if (existing_cache.system_cached and
+                                len(existing_cache.system_tokens) > 0):
+                            # 通过重新应用相同的system prompt来比较
+                            try:
+                                test_tokens = tokenizer.apply_chat_template(
+                                    [{"role": "system", "content": system_prompt}],
+                                    add_generation_prompt=False, enable_thinking=False
+                                )
+                                if test_tokens == existing_cache.system_tokens:
+                                    existing_cache_for_same_prompt = existing_cache
+                                    logger.info(f"Found existing cache with same system prompt: {existing_key}")
+                                    break
+                            except Exception:
+                                continue
 
-                # Step 2: Create a session cache for this specific conversation
-                # Use the message content hash to distinguish different conversation sessions
-                messages_hash = hashlib.md5(
-                    json.dumps(request.messages, sort_keys=True).encode('utf-8')
-                ).hexdigest()[:8]
-                session_cache_key = f"session_{request.prompt_cache_key}_{messages_hash}"
+                    if existing_cache_for_same_prompt:
+                        # 复制现有cache，避免重新计算
+                        cache_obj = copy_prompt_cache(existing_cache_for_same_prompt, model)
+                        logger.info(f"Copied cache state from existing cache, no recomputation needed")
+                    else:
+                        # 没有找到相同的，需要重新计算
+                        cache_obj = PromptCache()
+                        cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
+                        logger.info(f"Created new cache with fresh computation for key: {request.prompt_cache_key}")
 
-                session_cache_obj = _prompt_caches.get(session_cache_key)
+                    _prompt_caches[request.prompt_cache_key] = cache_obj
 
-                if session_cache_obj is None:
-                    # Create a new session cache, starting from the base cache
-                    session_cache_obj = PromptCache()
-                    # Copy the status of the base cache
-                    session_cache_obj.cache = None # will be created in get_prompt_cache
-                    session_cache_obj.model_key = base_cache_obj.model_key
-                    session_cache_obj.system_cached = base_cache_obj.system_cached
-                    session_cache_obj.system_tokens = base_cache_obj.system_tokens.copy()
-                    session_cache_obj.tokens_no_gen = base_cache_obj.tokens_no_gen.copy()
-
-                    _prompt_caches[session_cache_key] = session_cache_obj
-                    logger.info(f"Created session cache based on base cache: {session_cache_key}")
-
-                # Use session cache for cache matching
+                    # 使用PromptCache的智能匹配
                 tokens_no_gen = tokenizer.apply_chat_template(
                     request.messages, add_generation_prompt=False, enable_thinking=False
                 )
                 tokens_with_gen = list(prompt)
                 model_key = getattr(model, "model_key", id(model))
 
-                tokens_to_process, prompt_cache, cache_hit = session_cache_obj.get_prompt_cache(
+                tokens_to_process, prompt_cache, cache_hit = cache_obj.get_prompt_cache(
                     model, tokens_with_gen, tokens_no_gen, model_key
                 )
 
                 if cache_hit:
                     logger.info(
-                        f"Session Cache HIT for "
-                        f"'{request.prompt_cache_key}'! "
-                        f"Processing {len(tokens_to_process)}/{original_prompt_len} tokens")
+                        f"Cache HIT for '{request.prompt_cache_key}'! Processing {len(tokens_to_process)}/{original_prompt_len} tokens")
                 else:
-                    logger.info(
-                        f"Session Cache MISS for "
-                        f"'{request.prompt_cache_key}' - processing all {original_prompt_len} tokens")
+                    logger.info(f"Cache MISS for '{request.prompt_cache_key}' - processing all {original_prompt_len} tokens")
             else:
                 logger.warning(f"prompt_cache_key provided but no system prompt found")
         except Exception as e:
@@ -682,7 +691,7 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
     if not isinstance(tokens_to_process, mx.array):
         tokens_to_process = mx.array(tokens_to_process)
 
-    return tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len
+    return tokens_to_process, prompt_cache, cache_hit, cache_obj, original_prompt_len
 
 async def stream_completion(prompt, request, model, tokenizer):
     created = int(time.time())
@@ -785,7 +794,7 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     # Using cache processing functions
-    tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len = handle_prompt_cache(
+    tokens_to_process, prompt_cache, cache_hit, cache_obj, original_prompt_len = handle_prompt_cache(
         request, model, tokenizer, prompt
     )
 
@@ -846,10 +855,10 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
 
     # Update the cache status after the generation is completed
     generated_text = "".join(generated_text_parts)
-    if request.prompt_cache_key and cache_hit and session_cache_obj:
+    if request.prompt_cache_key and cache_hit and cache_obj:
         try:
             updated_messages = request.messages + [{"role": "assistant", "content": generated_text}]
-            session_cache_obj.update_after_step(updated_messages, tokenizer)
+            cache_obj.update_after_step(updated_messages, tokenizer)
         except Exception as e:
             logger.warning(f"Failed to update stream prompt cache: {e}")
 
@@ -1014,7 +1023,7 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
         stop_words = request.stop if isinstance(request.stop, list) else [request.stop]
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
-    tokens_to_process, prompt_cache, cache_hit, session_cache_obj, original_prompt_len = handle_prompt_cache(
+    tokens_to_process, prompt_cache, cache_hit, cache_obj, original_prompt_len = handle_prompt_cache(
         request, model, tokenizer, prompt
     )
 
@@ -1042,11 +1051,10 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
         text = detokenizer.text
 
         # update prompt cache state
-        if request.prompt_cache_key and cache_hit and session_cache_obj:
+        if request.prompt_cache_key and cache_hit and cache_obj:
             try:
-                # Add assistant response to messages and update cache
                 updated_messages = request.messages + [{"role": "assistant", "content": text}]
-                session_cache_obj.update_after_step(updated_messages, tokenizer)
+                cache_obj.update_after_step(updated_messages, tokenizer)
             except Exception as e:
                 logger.warning(f"Failed to update prompt cache: {e}")
 
