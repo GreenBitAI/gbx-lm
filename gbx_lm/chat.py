@@ -6,6 +6,7 @@ import time
 import mlx.core as mx
 
 from .models.cache import make_prompt_cache
+from .prompt_cache import PromptCache
 from .sample_utils import make_sampler
 from .utils import load, stream_generate
 
@@ -13,7 +14,7 @@ DEFAULT_TEMP = 0.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_SEED = 0
 DEFAULT_MAX_TOKENS = 256
-DEFAULT_MODEL = "GreenBitAI/Llama-3.2-3B-Instruct-layer-mix-bpw-4.0-mlx"
+DEFAULT_MODEL = "GreenBitAI/Qwen3-4B-Instruct-2507-layer-mix-bpw-4.0-mlx"
 DEFAULT_SYSTEM_PROMPT = "You are Libra, a helpful and friendly AI assistant. You aim to provide clear and useful responses to help users with their questions and tasks."
 
 
@@ -82,7 +83,6 @@ def main():
     mlx_cache = None
     system_cache_start = time.time()
     if args.enable_cache:
-        from .prompt_cache import PromptCache
         prompt_cache_obj = PromptCache()
         print("Pre-caching system prompt...")
         prompt_cache_obj.cache_system_prompt(model, args.system_prompt, tokenizer)
@@ -102,8 +102,8 @@ def main():
         generation_start_time = time.time()
         
         if args.enable_cache and prompt_cache_obj:
-            input_ids_with_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=False)
-            input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=False)
+            input_ids_with_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=True)
+            input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=True)
             model_key = getattr(model, "model_key", id(model))
             tokens_to_process, cache, cache_hit = prompt_cache_obj.get_prompt_cache(
                 model, input_ids_with_gen, input_ids_no_gen, model_key
