@@ -15,9 +15,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import asyncio
 
-from .utils import generate_step, load
-from .sample_utils import make_sampler
-from .prompt_cache import PromptCache
+from gbx_lm.utils import generate_step, load
+from gbx_lm.sample_utils import make_sampler
+from gbx_lm.prompt_cache import PromptCache
+from gbx_lm.infer_opt import eminf_generate, eminf_generate_step
 
 # Try to import mlx_lm for mlx-community models
 try:
@@ -356,6 +357,12 @@ def create_app(args):
     @app.post("/v1/completions", response_model=Dict)
     async def create_completion(request: CompletionRequest):
         try:
+            if request.use_eminf:
+                raise HTTPException(
+                    status_code=400,
+                    detail="EMINF optimization is only supported for chat completions, not text completions"
+                )
+
             # Verify and get the model path
             model_path = validate_and_get_model_path(request.model)
             model_lock = server_config.get_model_lock(model_path)
@@ -540,6 +547,7 @@ class CompletionRequest(BaseModel):
     repetition_context_size: int = 20
     with_hidden_states: bool = False
     remote_score: bool = True
+    use_eminf: bool = False
 
 
 class ChatCompletionRequest(BaseModel):
@@ -557,6 +565,7 @@ class ChatCompletionRequest(BaseModel):
     remote_score: bool = True
     enable_thinking: Optional[bool] = None  # Qwen3 Model only feature
     prompt_cache_key: Optional[str] = None
+    use_eminf: bool = False
 
 
 def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
@@ -695,13 +704,14 @@ async def stream_completion(prompt, request, model, tokenizer):
         stop_id_sequences = [tokenizer.encode(stop) for stop in stop_words]
 
     async for (token, _, hidden_states) in async_generate_step(
-            prompt=prompt,
-            model=model,
-            tokenizer=tokenizer,
-            temp=request.temperature,
-            top_p=request.top_p,
-            with_hidden_states=request.with_hidden_states,
-            max_tokens=request.max_tokens
+        prompt=prompt,
+        model=model,
+        tokenizer=tokenizer,
+        temp=request.temperature,
+        top_p=request.top_p,
+        with_hidden_states=request.with_hidden_states,
+        max_tokens=request.max_tokens,
+        use_eminf=request.use_eminf
     ):
         token = token
         detokenizer.add_token(token)
@@ -784,15 +794,20 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
         request, model, tokenizer, prompt
     )
 
+    if request.use_eminf:
+        request._cache_obj = cache_obj  # Temporarily store cache_obj in the request object
+
     async for (token, _, hidden_states) in async_generate_step(
-            prompt=tokens_to_process,
-            model=model,
-            tokenizer=tokenizer,
-            temp=request.temperature,
-            top_p=request.top_p,
-            with_hidden_states=request.with_hidden_states,
-            max_tokens=request.max_tokens,
-            prompt_cache=prompt_cache
+        prompt=tokens_to_process,
+        model=model,
+        tokenizer=tokenizer,
+        temp=request.temperature,
+        top_p=request.top_p,
+        with_hidden_states=request.with_hidden_states,
+        max_tokens=request.max_tokens,
+        prompt_cache=prompt_cache,
+        use_eminf=request.use_eminf,
+        request=request
     ):
         detokenizer.add_token(token)
         tokens.append(token)
@@ -879,7 +894,48 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     yield "data: [DONE]\n\n"
 
 
-async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens, prompt_cache=None):
+async def async_eminf_generate_step(
+        prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens,
+        prompt_cache=None, request=None, cache_obj=None
+):
+    """
+    Async wrapper for EMINF generation that yields tokens incrementally.
+    """
+    try:
+        # Get input_ids for EMINF
+        if isinstance(prompt, mx.array):
+            input_ids = prompt.tolist()
+        else:
+            input_ids = list(prompt)
+
+        # Reconstruct input_ids_no_gen without generation prompt
+        if request and hasattr(request, 'messages'):
+            enable_thinking = getattr(request, 'enable_thinking', False) if hasattr(request,
+                                                                                    'enable_thinking') else False
+            input_ids_no_gen = tokenizer.apply_chat_template(
+                request.messages,
+                add_generation_prompt=False,
+                enable_thinking=enable_thinking
+            )
+        else:
+            # Fallback: estimate by removing typical generation prompt tokens
+            input_ids_no_gen = input_ids.copy()  # This is suboptimal but necessary fallback
+
+        # Use streaming EMINF generation
+        for token_data in eminf_generate_step(
+                model, tokenizer, input_ids, input_ids_no_gen,
+                max_tokens=max_tokens, prompt_cache=cache_obj, use_cache=cache_obj is not None
+        ):
+            yield token_data
+            await asyncio.sleep(0)  # Allow other tasks to run
+
+    except Exception as e:
+        logger.error(f"EMINF generation failed: {str(e)}")
+
+async def async_generate_step(
+        prompt, model, tokenizer, temp, top_p, with_hidden_states, max_tokens,
+        prompt_cache=None, use_eminf=False, request=None
+):
     """Wrap the synchronous generate_step as an async generator."""
     sampler = make_sampler(temp, top_p)
 
@@ -887,6 +943,11 @@ async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden
     is_mlx_community = hasattr(model, '_loaded_with_mlx_lm') or 'mlx_community' in str(model.__class__)
 
     if is_mlx_community and HAVE_MLX_LM:
+        # Check if EMINF is requested for mlx-community models
+        if use_eminf:
+            logger.warning(
+                "EMINF optimization is not supported for mlx-community models, falling back to standard generation")
+
         # Use mlx_lm's generate_step for mlx-community models
         for token_data in mlx_lm.generate.generate_step(
                 prompt=prompt,
@@ -901,20 +962,38 @@ async def async_generate_step(prompt, model, tokenizer, temp, top_p, with_hidden
             yield (token, logprobs, None)  # mlx_lm doesn't support hidden_states currently
             await asyncio.sleep(0)
     else:
-        # Use original generate_step for GreenBitAI models
-        for token, logprobs, hidden_states in generate_step(
-            prompt=prompt,
-            model=model,
-            max_tokens=max_tokens,
-            sampler=sampler,
-            with_hidden_states=with_hidden_states,
-            prompt_cache=prompt_cache,
-        ):
-            if token in tokenizer.eos_token_ids:
-                break
+        if use_eminf:
+            # Use EMINF optimization
+            logger.info("Using EMINF optimization for generation")
 
-            yield (token, logprobs, hidden_states)
-            await asyncio.sleep(0)
+            async for token_data in async_eminf_generate_step(
+                    prompt=prompt,
+                    model=model,
+                    tokenizer=tokenizer,
+                    temp=temp,
+                    top_p=top_p,
+                    with_hidden_states=with_hidden_states,
+                    max_tokens=max_tokens,
+                    prompt_cache=prompt_cache,
+                    request=request,
+                    cache_obj=getattr(request, '_cache_obj', None)
+            ):
+                yield token_data
+        else:
+            # Use original generate_step for GreenBitAI models
+            for token, logprobs, hidden_states in generate_step(
+                    prompt=prompt,
+                    model=model,
+                    max_tokens=max_tokens,
+                    sampler=sampler,
+                    with_hidden_states=with_hidden_states,
+                    prompt_cache=prompt_cache,
+            ):
+                if token in tokenizer.eos_token_ids:
+                    break
+
+                yield (token, logprobs, hidden_states)
+                await asyncio.sleep(0)
 
 async def generate_completion(prompt, request, model, tokenizer):
     created = int(time.time())
@@ -932,13 +1011,14 @@ async def generate_completion(prompt, request, model, tokenizer):
 
     try:
         async for (token, _, hidden_states) in async_generate_step(
-                prompt=prompt,
-                model=model,
-                tokenizer=tokenizer,
-                temp=request.temperature,
-                top_p=request.top_p,
-                with_hidden_states=request.with_hidden_states,
-                max_tokens=request.max_tokens
+            prompt=prompt,
+            model=model,
+            tokenizer=tokenizer,
+            temp=request.temperature,
+            top_p=request.top_p,
+            with_hidden_states=request.with_hidden_states,
+            max_tokens=request.max_tokens,
+            use_eminf=request.use_eminf
         ):
             detokenizer.add_token(token)
             tokens.append(token)
@@ -1014,15 +1094,20 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
     )
 
     try:
+        if request.use_eminf:
+            request._cache_obj = cache_obj  # Temporarily store cache_obj in the request object
+
         async for (token, _, hidden_states) in async_generate_step(
-                prompt=tokens_to_process,
-                model=model,
-                tokenizer=tokenizer,
-                temp=request.temperature,
-                top_p=request.top_p,
-                with_hidden_states=request.with_hidden_states,
-                max_tokens=request.max_tokens,
-                prompt_cache=prompt_cache
+            prompt=tokens_to_process,
+            model=model,
+            tokenizer=tokenizer,
+            temp=request.temperature,
+            top_p=request.top_p,
+            with_hidden_states=request.with_hidden_states,
+            max_tokens=request.max_tokens,
+            prompt_cache=prompt_cache,
+            use_eminf=request.use_eminf,
+            request=request
         ):
             detokenizer.add_token(token)
             tokens.append(token)
