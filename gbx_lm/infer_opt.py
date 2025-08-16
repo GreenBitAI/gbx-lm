@@ -2,7 +2,9 @@ import time
 import numpy as np
 import mlx.core as mx
 import mlx.nn as nn
+
 from gbx_lm.models.cache import make_prompt_cache
+from gbx_lm.tokenizer_utils import TokenizerWrapper
 
 
 def get_input_ids(prompt_cache, model, ids_with_gen, ids_no_gen, model_key, use_cache=True):
@@ -26,14 +28,17 @@ def get_input_ids(prompt_cache, model, ids_with_gen, ids_no_gen, model_key, use_
         return ids_with_gen, False, cache
 
 def eminf_optimize(logits, alpha=0.65, num_steps=None, threshold=0.05):
+
     def entropy_calculation(x):
         probs = mx.softmax(x, axis=-1)
         return -mx.sum(probs * mx.log(probs + 1e-10))
+
     def step_allocation(H_init, H_target, min_step = 3, max_step = 15):
         r = float(mx.maximum(0.0, H_init - H_target)/H_target)
         s = r/(1.0+r)
         steps = int(min_step+max_step *s)   
         return steps
+
     current_logits = logits.astype(mx.float32)
     initial_alpha = alpha
     initial_entropy = entropy_calculation(current_logits)
@@ -71,10 +76,12 @@ def eminf_optimize(logits, alpha=0.65, num_steps=None, threshold=0.05):
             break
     return best_logits, best_entropy
 
-def eminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens, num_steps = None, alpha = 0.65, threshold = 0.05, max_kv_size = None, prompt_cache=None, use_cache=True):
+def eminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens, num_steps = None, alpha = 0.65,
+                   threshold = 0.05, max_kv_size = None, prompt_cache=None, use_cache=True):
     # Get input IDs with cache optimization
     model_key = getattr(model, "model_key", id(model))
-    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids, input_ids_no_gen, model_key, use_cache)
+    cached_input_ids, cache_hit, cache = get_input_ids(prompt_cache, model, input_ids,
+                                                       input_ids_no_gen, model_key, use_cache)
     generated_ids = list(cached_input_ids)
     original_length = len(cached_input_ids)
     output = model(mx.array([cached_input_ids]), cache = cache, hidden_states = False)
@@ -84,35 +91,72 @@ def eminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens, nu
     output = mx.stop_gradient(output)
     logits = output[:, -1, :].astype(mx.float32)
 
+    if not isinstance(tokenizer, TokenizerWrapper):
+        tokenizer = TokenizerWrapper(tokenizer)
+
+    detokenizer = tokenizer.detokenizer
+    detokenizer.reset()
+
     for i in range(max_tokens):
         try:
             response = ""
-            best_logits, best_entropy = eminf_optimize(logits, alpha = alpha, num_steps = num_steps, threshold = threshold)
+            best_logits, best_entropy = eminf_optimize(
+                logits, alpha = alpha, num_steps = num_steps, threshold = threshold
+            )
             final_probs = nn.softmax(best_logits, axis = -1)
             probs_np = np.array(final_probs).flatten()
             probs_np = probs_np / probs_np.sum()
             next_token = np.random.choice(len(probs_np), p=probs_np)
             generated_ids.append(next_token)
+
             if next_token == tokenizer.eos_token_id:
                 break
+
             new_tokens = mx.array([[next_token]])
-            response += tokenizer.decode([next_token])
-            print(response, flush=True, end="")
-            output2 = model(new_tokens, cache = cache, hidden_states = False)
+
+            # Use detokenizer for correct incremental decoding
+            detokenizer.add_token(next_token)
+            response_segment = detokenizer.last_segment
+
+            if response_segment:
+                print(response_segment, flush=True, end="")
+
+            output2 = model(new_tokens, cache=cache, hidden_states=False)
             mx.eval([c.state for c in cache])
             mx.clear_cache()
             output2 = mx.stop_gradient(output2)
             logits = output2[:, -1, :].astype(mx.float32)
+
         except Exception as e:
             print(f"EMINF error at step {i}: {e}")
             break
+
+    # Ensure all remaining tokens are processed
+    detokenizer.finalize()
+    final_segment = detokenizer.last_segment
+    if final_segment:
+        print(final_segment, flush=True, end="")
+
     return generated_ids[original_length:]
 
 def generate_response(model, tokenizer, messages, model_name, max_tokens, prompt_cache=None, use_cache=True):
-    input_ids = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking = False)
-    input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking = False)
+
+    input_ids = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=True,
+        enable_thinking = False
+    )
+
+    input_ids_no_gen = tokenizer.apply_chat_template(
+        messages,
+        add_generation_prompt=False,
+        enable_thinking = False
+    )
         
-    generated_ids = eminf_generate(model, tokenizer, input_ids, input_ids_no_gen, max_tokens=max_tokens, prompt_cache=prompt_cache, use_cache=use_cache)
+    generated_ids = eminf_generate(
+        model, tokenizer, input_ids, input_ids_no_gen,
+        max_tokens=max_tokens, prompt_cache=prompt_cache, use_cache=use_cache
+    )
     response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
     response = response.strip()
     return response

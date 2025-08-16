@@ -9,13 +9,15 @@ from .models.cache import make_prompt_cache
 from .prompt_cache import PromptCache
 from .sample_utils import make_sampler
 from .utils import load, stream_generate
+from .infer_opt import generate_response
 
 DEFAULT_TEMP = 0.0
 DEFAULT_TOP_P = 1.0
 DEFAULT_SEED = 0
 DEFAULT_MAX_TOKENS = 256
 DEFAULT_MODEL = "GreenBitAI/Qwen3-4B-Instruct-2507-layer-mix-bpw-4.0-mlx"
-DEFAULT_SYSTEM_PROMPT = "You are Libra, a helpful and friendly AI assistant. You aim to provide clear and useful responses to help users with their questions and tasks."
+DEFAULT_SYSTEM_PROMPT = "You are Libra, a helpful and friendly AI assistant. " \
+                        "You aim to provide clear and useful responses to help users with their questions and tasks."
 
 
 def setup_arg_parser():
@@ -63,10 +65,10 @@ def setup_arg_parser():
         help="Enable prompt caching for better performance in multi-turn conversations",
     )
     parser.add_argument(
-        "--method",
+        "--infer-opt",
         type=str,
         default=None,
-        help="Generation method to use (e.g., 'eminf' for EMINF optimization)",
+        help="Generation method to use (e.g., 'eminf' for EMINF inference optimizer)",
     )
     return parser
 
@@ -106,25 +108,41 @@ def main():
         messages.append({"role": "user", "content": query})
 
         generation_start_time = time.time()
-        if args.method is not None:
+        if args.infer_opt is not None:
             if args.enable_cache and prompt_cache_obj:
-                from .method import generate_response
-                response_text = generate_response(model, tokenizer, messages, args.model, max_tokens=args.max_tokens, prompt_cache=prompt_cache_obj, use_cache=args.enable_cache)
+                response_text = generate_response(
+                    model, tokenizer, messages, args.model,
+                    max_tokens=args.max_tokens, prompt_cache=prompt_cache_obj,
+                    use_cache=args.enable_cache
+                )
                 messages.append({"role": "assistant", "content": response_text})
                 prompt_cache_obj.update_after_step(messages, tokenizer)
             else:
-                from .method import generate_response
-                response_text = generate_response(model, tokenizer, messages, args.model, max_tokens=args.max_tokens, prompt_cache=mlx_cache, use_cache=args.enable_cache)
+                response_text = generate_response(
+                    model, tokenizer, messages, args.model, max_tokens=args.max_tokens,
+                    prompt_cache=mlx_cache, use_cache=args.enable_cache
+                )
         else:
             if args.enable_cache and prompt_cache_obj:
-                input_ids_with_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=True, enable_thinking=True)
-                input_ids_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=True)
+                input_ids_with_gen = tokenizer.apply_chat_template(
+                    messages,
+                    add_generation_prompt=True,
+                    enable_thinking=True
+                )
+
+                input_ids_no_gen = tokenizer.apply_chat_template(
+                    messages,
+                    add_generation_prompt=False,
+                    enable_thinking=True
+                )
+
                 model_key = getattr(model, "model_key", id(model))
                 tokens_to_process, cache, cache_hit = prompt_cache_obj.get_prompt_cache(
                     model, input_ids_with_gen, input_ids_no_gen, model_key
                 )
                 if cache_hit:
-                    print(f"Cache hit! Processing {len(tokens_to_process)} tokens instead of {len(input_ids_with_gen)}")
+                    print(f"Cache hit! Processing {len(tokens_to_process)} tokens instead of "
+                          f"{len(input_ids_with_gen)}")
                 else:
                     print(f"No cache benefit - processing all {len(input_ids_with_gen)} tokens")
                 response_text = ""
