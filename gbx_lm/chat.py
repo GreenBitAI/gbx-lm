@@ -70,12 +70,19 @@ def setup_arg_parser():
         default=None,
         help="Generation method to use (e.g., 'eminf' for EMINF inference optimizer)",
     )
+    parser.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        help="Enable thinking mode for Qwen3 models",
+    )
     return parser
 
 
 def main():
     parser = setup_arg_parser()
     args = parser.parse_args()
+
+    enable_thinking = args.enable_thinking
 
     mx.random.seed(args.seed)
 
@@ -127,13 +134,13 @@ def main():
                 input_ids_with_gen = tokenizer.apply_chat_template(
                     messages,
                     add_generation_prompt=True,
-                    enable_thinking=True
+                    enable_thinking=enable_thinking
                 )
 
                 input_ids_no_gen = tokenizer.apply_chat_template(
                     messages,
                     add_generation_prompt=False,
-                    enable_thinking=True
+                    enable_thinking=enable_thinking
                 )
 
                 model_key = getattr(model, "model_key", id(model))
@@ -158,7 +165,7 @@ def main():
                     response_text += response.text
                 
                 messages.append({"role": "assistant", "content": response_text})
-                prompt_cache_obj.update_after_step(messages, tokenizer)
+                prompt_cache_obj.update_after_step(messages, tokenizer, enable_thinking)
             else:
                 prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
                 for response in stream_generate(

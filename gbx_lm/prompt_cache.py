@@ -118,7 +118,7 @@ class PromptCache:
         self.tokens_no_gen = list(tokens_no_gen)
         return tokens_to_process, self.cache, True
 
-    def update_after_step(self, messages, tokenizer):
+    def update_after_step(self, messages, tokenizer, enable_thinking=False):
         """
         After generation, trim the generation suffix(e.g. <assistant>, /n, etc.) so the cache matches no-gen prefix.
         Without this step, the cache would contain generation prompt tokens that don't match the actual conversation state, causing cache misses.
@@ -127,10 +127,10 @@ class PromptCache:
             return
         try:
             tokens_with_gen = tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, enable_thinking=False
+                messages, add_generation_prompt=True, enable_thinking=enable_thinking
             )
             tokens_no_gen = tokenizer.apply_chat_template(
-                messages, add_generation_prompt=False, enable_thinking=False
+                messages, add_generation_prompt=False, enable_thinking=enable_thinking
             )
             # calculate tokens to trim (the generation prompt)
             num_to_trim = len(tokens_with_gen) - len(tokens_no_gen)

@@ -882,36 +882,17 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
                         cache_obj = copy_prompt_cache(base_cache, model)
                         logger.debug(f"Copied cache from base cache with hash: {prompt_hash}")
                     else:
-                        # Finally check if there is the same system prompt in the existing session cache
-                        existing_cache_for_same_prompt = None
-
-                        test_tokens = tokenizer.apply_chat_template(
-                            [{"role": "system", "content": system_prompt}],
-                            add_generation_prompt=False, enable_thinking=False
-                        )
-
-                        for existing_key, existing_cache in server_config.session_caches.items():
-                            if (existing_cache.system_cached and
-                                    len(existing_cache.system_tokens) > 0):
-                                if test_tokens == existing_cache.system_tokens:
-                                    existing_cache_for_same_prompt = existing_cache
-                                    logger.debug(
-                                        f"Found existing session cache with same system prompt: {existing_key}")
-                                    break
-
-                        if existing_cache_for_same_prompt:
-                            cache_obj = copy_prompt_cache(existing_cache_for_same_prompt, model)
-                            logger.debug(f"Copied cache state from existing session cache, no recomputation needed")
-                        else:
-                            cache_obj = PromptCache()
-                            cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
-                            logger.debug(
-                                f"Created new cache with fresh computation for key: {request.prompt_cache_key}")
+                        # Create new cache object
+                        cache_obj = PromptCache()
+                        cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
+                        logger.debug(
+                            f"Created new cache with fresh computation for key: {request.prompt_cache_key}")
 
                     server_config.session_caches[request.prompt_cache_key] = cache_obj
 
+                enable_thinking = getattr(request, 'enable_thinking', False)
                 tokens_no_gen = tokenizer.apply_chat_template(
-                    request.messages, add_generation_prompt=False, enable_thinking=False
+                    request.messages, add_generation_prompt=False, enable_thinking=enable_thinking
                 )
                 tokens_with_gen = list(prompt)
                 model_key = getattr(model, "model_key", id(model))
@@ -1103,10 +1084,16 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
 
     # Update the cache status after the generation is completed
     generated_text = "".join(generated_text_parts)
-    if request.prompt_cache_key and cache_hit and cache_obj:
+    if request.prompt_cache_key and cache_obj:
         try:
             updated_messages = request.messages + [{"role": "assistant", "content": generated_text}]
-            cache_obj.update_after_step(updated_messages, tokenizer)
+            enable_thinking = getattr(request, 'enable_thinking', False)
+            cache_obj.update_after_step(updated_messages, tokenizer, enable_thinking)
+
+            logger.info(
+                f"Using EMINF optimization for generation; updated cache object: "
+                f"message length {len(request.messages)} → {len(updated_messages)}"
+            )
         except Exception as e:
             logger.warning(f"Failed to update stream prompt cache: {e}")
 
@@ -1369,10 +1356,16 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
         text = detokenizer.text
 
         # update prompt cache state
-        if request.prompt_cache_key and cache_hit and cache_obj:
+        if request.prompt_cache_key and cache_obj:
             try:
                 updated_messages = request.messages + [{"role": "assistant", "content": text}]
-                cache_obj.update_after_step(updated_messages, tokenizer)
+                enable_thinking = getattr(request, 'enable_thinking', False)
+                cache_obj.update_after_step(updated_messages, tokenizer, enable_thinking)
+
+                logger.info(
+                    f"Using EMINF optimization for generation; updated cache object: "
+                    f"message length {len(request.messages)} → { len(updated_messages)}"
+                )
             except Exception as e:
                 logger.warning(f"Failed to update prompt cache: {e}")
 
