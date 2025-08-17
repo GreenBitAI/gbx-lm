@@ -6,6 +6,7 @@ import json
 import time
 import uuid
 import hashlib
+import copy
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Set
 
@@ -18,7 +19,8 @@ import asyncio
 from gbx_lm.utils import generate_step, load
 from gbx_lm.sample_utils import make_sampler
 from gbx_lm.prompt_cache import PromptCache
-from gbx_lm.infer_opt import eminf_generate, eminf_generate_step
+from gbx_lm.infer_opt import eminf_generate_step
+from gbx_lm.models.cache import make_prompt_cache
 
 # Try to import mlx_lm for mlx-community models
 try:
@@ -568,6 +570,44 @@ class ChatCompletionRequest(BaseModel):
     use_eminf: bool = False
 
 
+def deep_copy_cache_object(src_cache):
+    """
+    Uses the MLX cache's state/meta_state mechanism for deep copying.
+    This uses the cache object's own serialization logic.
+    """
+    try:
+        # Create a new cache object of the same type
+        new_cache = type(src_cache)()
+
+        # If there are construction parameters, try to get them from the source object
+        if hasattr(src_cache, 'group_size') and hasattr(src_cache, 'bits'):
+            # QuantizedKVCache
+            new_cache = type(src_cache)(
+                group_size=src_cache.group_size,
+                bits=src_cache.bits
+            )
+        elif hasattr(src_cache, 'max_size') and hasattr(src_cache, 'keep'):
+            # RotatingKVCache
+            new_cache = type(src_cache)(
+                max_size=src_cache.max_size,
+                keep=src_cache.keep,
+                step=getattr(src_cache, 'step', 256)
+            )
+
+        # Use the built-in state mechanism to replicate state
+        if hasattr(src_cache, 'state') and src_cache.state:
+            new_cache.state = src_cache.state  # This will trigger the setter, automatically handling the copy
+
+        # Copy meta_state
+        if hasattr(src_cache, 'meta_state') and src_cache.meta_state:
+            new_cache.meta_state = src_cache.meta_state
+
+        return new_cache
+
+    except Exception as e:
+        logger.warning(f"Unknown cache type: {type(src_cache)}, attempting generic copy")
+        return copy.deepcopy(src_cache)
+
 def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
     """
     Creates a new copy of an existing PromptCache to avoid recalculating the system prompt.
@@ -582,26 +622,28 @@ def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
 
     new_cache_obj.model_key = source_cache_obj.model_key
     new_cache_obj.system_cached = source_cache_obj.system_cached
-    new_cache_obj.system_tokens = source_cache_obj.system_tokens.copy()
-    new_cache_obj.tokens_no_gen = source_cache_obj.tokens_no_gen.copy()
+    new_cache_obj.system_tokens = list(source_cache_obj.system_tokens)
+    new_cache_obj.tokens_no_gen = list(source_cache_obj.system_tokens)
 
     try:
-        from .models.cache import make_prompt_cache
-        new_cache_obj.cache = make_prompt_cache(model)
-
         if source_cache_obj.cache and source_cache_obj.system_cached:
-            # copy each layer cache state
-            for i, (src_cache, new_cache) in enumerate(zip(source_cache_obj.cache, new_cache_obj.cache)):
-                if hasattr(src_cache, 'state') and hasattr(new_cache, 'state'):
-                    # copy KV cache state
-                    new_cache.state = [mx.array(state) for state in src_cache.state]
-                    new_cache.offset = src_cache.offset
+            # Make a complete deep copy of each layer's cache object
+            new_cache_obj.cache = []
+
+            for i, src_cache in enumerate(source_cache_obj.cache):
+                new_cache = deep_copy_cache_object(src_cache)
+                new_cache_obj.cache.append(new_cache)
 
             logger.info(f"Successfully copied cache state without recomputation")
+        else:
+            # If there is no cache status, create an empty cache
+            new_cache_obj.cache = make_prompt_cache(model)
+            new_cache_obj.system_cached = False
 
     except Exception as e:
         logger.warning(f"Failed to copy cache state, falling back to recomputation: {e}")
         new_cache_obj.cache = None
+        new_cache_obj.system_cached = False
 
     return new_cache_obj
 
