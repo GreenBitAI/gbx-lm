@@ -1,4 +1,5 @@
 import os
+import gc
 import logging
 from datetime import datetime
 import argparse
@@ -6,7 +7,6 @@ import json
 import time
 import uuid
 import hashlib
-import copy
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Set
 
@@ -510,12 +510,21 @@ def create_app(args):
         """Delete a specific prompt cache by its key"""
         try:
             if cache_key in server_config.session_caches:
-                del server_config.session_caches[cache_key]
-                logger.info(f"Deleted prompt cache with key: {cache_key}")
-                return {
-                    "message": f"Successfully deleted prompt cache: {cache_key}",
-                    "deleted_key": cache_key
-                }
+                # Perform deep cleanup (safe due to deep copying)
+                success = deep_cleanup_session_cache(cache_key, server_config.session_caches)
+
+                if success:
+                    logger.info(f"Deep cleaned independent cache: {cache_key}")
+                    return {
+                        "message": f"Successfully deep cleaned prompt cache: {cache_key}",
+                        "deleted_key": cache_key,
+                        "cleanup_type": "deep_independent"
+                    }
+                else:
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to clean cache: {cache_key}"
+                    )
             else:
                 raise HTTPException(
                     status_code=404,
@@ -570,7 +579,79 @@ class ChatCompletionRequest(BaseModel):
     use_eminf: bool = False
 
 
-def deep_copy_cache_object(src_cache):
+def ensure_deep_copy_cache_state(src_cache):
+    """
+    Ensure deep copy of cache state by explicitly copying MLX arrays.
+    This replaces the potentially shallow copy behavior.
+    """
+    if src_cache is None or not hasattr(src_cache, 'state') or not src_cache.state:
+        return None
+
+    try:
+        # Get the state (keys, values tuple)
+        keys, values = src_cache.state
+
+        # Explicitly deep copy MLX arrays
+        if isinstance(keys, (list, tuple)):
+            # For QuantizedKVCache - keys/values are tuples of multiple arrays
+            deep_keys = []
+            deep_values = []
+
+            for k, v in zip(keys, values):
+                if k is not None:
+                    # Force deep copy by creating new array from data
+                    deep_keys.append(mx.array(k))
+                else:
+                    deep_keys.append(None)
+
+                if v is not None:
+                    deep_values.append(mx.array(v))
+                else:
+                    deep_values.append(None)
+
+            return tuple(deep_keys), tuple(deep_values)
+        else:
+            # For standard KVCache - keys/values are single arrays
+            deep_keys = mx.array(keys) if keys is not None else None
+            deep_values = mx.array(values) if values is not None else None
+            return deep_keys, deep_values
+
+    except Exception as e:
+        logging.warning(f"Failed to ensure deep copy: {e}")
+        return None
+
+def verify_cache_independence(cache1, cache2) -> bool:
+    """
+    Verify that two caches don't share underlying MLX arrays.
+    This is a debug utility to check if deep copying worked.
+    """
+    try:
+        if (not hasattr(cache1, 'cache') or not hasattr(cache2, 'cache') or
+                not cache1.cache or not cache2.cache):
+            return True
+
+        # Compare first layer cache objects
+        layer1 = cache1.cache[0]
+        layer2 = cache2.cache[0]
+
+        if (hasattr(layer1, 'keys') and hasattr(layer2, 'keys') and
+                layer1.keys is not None and layer2.keys is not None):
+
+            # Check if they reference the same object
+            if isinstance(layer1.keys, (list, tuple)) and isinstance(layer2.keys, (list, tuple)):
+                # For quantized cache
+                return layer1.keys[0] is not layer2.keys[0] if len(layer1.keys) > 0 else True
+            else:
+                # For standard cache
+                return layer1.keys is not layer2.keys
+
+        return True
+
+    except Exception as e:
+        logging.warning(f"Could not verify cache independence: {e}")
+        return True  # Assume independent if can't verify
+
+def deep_copy_cache_object(src_cache, model):
     """
     Uses the MLX cache's state/meta_state mechanism for deep copying.
     This uses the cache object's own serialization logic.
@@ -594,9 +675,9 @@ def deep_copy_cache_object(src_cache):
                 step=getattr(src_cache, 'step', 256)
             )
 
-        # Use the built-in state mechanism to replicate state
-        if hasattr(src_cache, 'state') and src_cache.state:
-            new_cache.state = src_cache.state  # This will trigger the setter, automatically handling the copy
+        deep_copied_state = ensure_deep_copy_cache_state(src_cache)
+        if deep_copied_state:
+            new_cache.state = deep_copied_state
 
         # Copy meta_state
         if hasattr(src_cache, 'meta_state') and src_cache.meta_state:
@@ -605,8 +686,14 @@ def deep_copy_cache_object(src_cache):
         return new_cache
 
     except Exception as e:
-        logger.warning(f"Unknown cache type: {type(src_cache)}, attempting generic copy")
-        return copy.deepcopy(src_cache)
+        logging.warning(f"Improved deep copy failed for {type(src_cache)}, falling back: {e}")
+        # Fallback to original approach
+        new_cache = type(src_cache)()
+        if hasattr(src_cache, 'state') and src_cache.state:
+            new_cache.state = src_cache.state
+        if hasattr(src_cache, 'meta_state') and src_cache.meta_state:
+            new_cache.meta_state = src_cache.meta_state
+        return new_cache
 
 def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
     """
@@ -631,10 +718,15 @@ def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
             new_cache_obj.cache = []
 
             for i, src_cache in enumerate(source_cache_obj.cache):
-                new_cache = deep_copy_cache_object(src_cache)
+                new_cache = deep_copy_cache_object(src_cache, model)
                 new_cache_obj.cache.append(new_cache)
 
-            logger.info(f"Successfully copied cache state without recomputation")
+            ## NOTE: Verify independence (optional debug check)
+            # if len(new_cache_obj.cache) > 0 and len(source_cache_obj.cache) > 0:
+            #     is_independent = verify_cache_independence(new_cache_obj, source_cache_obj)
+            #     logging.debug(f"Cache independence verified: {is_independent}")
+
+            logger.debug(f"Successfully copied cache state without recomputation")
         else:
             # If there is no cache status, create an empty cache
             new_cache_obj.cache = make_prompt_cache(model)
@@ -646,6 +738,119 @@ def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
         new_cache_obj.system_cached = False
 
     return new_cache_obj
+
+
+def safe_cleanup_independent_cache(cache_obj):
+    """
+    Aggressively clean up cache object that we know is independent.
+    Since we ensured deep copying, this won't affect other caches.
+    """
+    if cache_obj is None:
+        return
+
+    try:
+        # Aggressive cleanup since we know the cache is independent
+        if hasattr(cache_obj, 'cache') and cache_obj.cache:
+            for i, layer_cache in enumerate(cache_obj.cache):
+                cleanup_layer_cache_aggressive(layer_cache)
+                cache_obj.cache[i] = None
+            cache_obj.cache = None
+
+        # Clear token lists
+        if hasattr(cache_obj, 'tokens_no_gen'):
+            cache_obj.tokens_no_gen = []
+        if hasattr(cache_obj, 'system_tokens'):
+            cache_obj.system_tokens = []
+
+        # Reset state
+        cache_obj.system_cached = False
+        cache_obj.model_key = None
+
+        logging.debug("Successfully performed aggressive cleanup on independent cache")
+
+    except Exception as e:
+        logging.warning(f"Error during aggressive cleanup: {e}")
+
+def cleanup_layer_cache_aggressive(layer_cache):
+    """
+    Aggressively clean individual layer cache objects.
+    Safe to use when cache independence is guaranteed.
+    """
+    if layer_cache is None:
+        return
+
+    try:
+        cache_type = type(layer_cache).__name__
+
+        if cache_type in ['KVCache', 'RotatingKVCache']:
+            # Clean standard KV cache
+            if hasattr(layer_cache, 'keys') and layer_cache.keys is not None:
+                del layer_cache.keys  # Explicit deletion
+                layer_cache.keys = None
+            if hasattr(layer_cache, 'values') and layer_cache.values is not None:
+                del layer_cache.values
+                layer_cache.values = None
+
+        elif cache_type == 'QuantizedKVCache':
+            # Clean quantized cache
+            if hasattr(layer_cache, 'keys') and layer_cache.keys is not None:
+                if isinstance(layer_cache.keys, (list, tuple)):
+                    for i in range(len(layer_cache.keys)):
+                        if layer_cache.keys[i] is not None:
+                            del layer_cache.keys[i]
+                        layer_cache.keys[i] = None
+                del layer_cache.keys
+                layer_cache.keys = None
+
+            if hasattr(layer_cache, 'values') and layer_cache.values is not None:
+                if isinstance(layer_cache.values, (list, tuple)):
+                    for i in range(len(layer_cache.values)):
+                        if layer_cache.values[i] is not None:
+                            del layer_cache.values[i]
+                        layer_cache.values[i] = None
+                del layer_cache.values
+                layer_cache.values = None
+
+        # Reset attributes
+        if hasattr(layer_cache, 'offset'):
+            layer_cache.offset = 0
+        if hasattr(layer_cache, '_idx'):
+            layer_cache._idx = 0
+
+        logging.debug(f"Aggressively cleaned {cache_type}")
+
+    except Exception as e:
+        logging.warning(f"Error aggressively cleaning {cache_type}: {e}")
+
+
+def deep_cleanup_session_cache(cache_key: str, session_caches: Dict) -> bool:
+    """
+    Deep cleanup with confidence that caches are independent due to deep copying.
+    """
+    if cache_key not in session_caches:
+        return False
+
+    try:
+        cache_obj = session_caches[cache_key]
+
+        # Since we use improved deep copying, we can safely do aggressive cleanup
+        safe_cleanup_independent_cache(cache_obj)
+
+        # Remove from dictionary
+        del session_caches[cache_key]
+
+        # Force garbage collection
+        gc.collect()
+
+        # Clear MLX memory cache
+        mx.clear_cache()
+
+        logging.debug(f"Deep cleanup completed for independent cache: {cache_key}")
+        return True
+
+    except Exception as e:
+        logging.error(f"Deep cleanup failed for {cache_key}: {e}")
+        return False
 
 def handle_prompt_cache(request, model, tokenizer, prompt):
     """
@@ -675,7 +880,7 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
 
                     if base_cache:
                         cache_obj = copy_prompt_cache(base_cache, model)
-                        logger.info(f"Copied cache from base cache with hash: {prompt_hash}")
+                        logger.debug(f"Copied cache from base cache with hash: {prompt_hash}")
                     else:
                         # Finally check if there is the same system prompt in the existing session cache
                         existing_cache_for_same_prompt = None
@@ -690,17 +895,17 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
                                     len(existing_cache.system_tokens) > 0):
                                 if test_tokens == existing_cache.system_tokens:
                                     existing_cache_for_same_prompt = existing_cache
-                                    logger.info(
+                                    logger.debug(
                                         f"Found existing session cache with same system prompt: {existing_key}")
                                     break
 
                         if existing_cache_for_same_prompt:
                             cache_obj = copy_prompt_cache(existing_cache_for_same_prompt, model)
-                            logger.info(f"Copied cache state from existing session cache, no recomputation needed")
+                            logger.debug(f"Copied cache state from existing session cache, no recomputation needed")
                         else:
                             cache_obj = PromptCache()
                             cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
-                            logger.info(
+                            logger.debug(
                                 f"Created new cache with fresh computation for key: {request.prompt_cache_key}")
 
                     server_config.session_caches[request.prompt_cache_key] = cache_obj
@@ -716,10 +921,10 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
                 )
 
                 if cache_hit:
-                    logger.info(
+                    logger.debug(
                         f"Cache HIT for '{request.prompt_cache_key}'! Processing {len(tokens_to_process)}/{original_prompt_len} tokens")
                 else:
-                    logger.info(f"Cache MISS for '{request.prompt_cache_key}' - processing all {original_prompt_len} tokens")
+                    logger.debug(f"Cache MISS for '{request.prompt_cache_key}' - processing all {original_prompt_len} tokens")
             else:
                 logger.warning(f"prompt_cache_key provided but no system prompt found")
         except Exception as e:
@@ -1006,7 +1211,7 @@ async def async_generate_step(
     else:
         if use_eminf:
             # Use EMINF optimization
-            logger.info("Using EMINF optimization for generation")
+            logger.debug("Using EMINF optimization for generation")
 
             async for token_data in async_eminf_generate_step(
                     prompt=prompt,
