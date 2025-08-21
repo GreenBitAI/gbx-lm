@@ -163,12 +163,31 @@ def parse_args():
     parser.add_argument("--eos_token", type=str, default="<|eot_id|>", help="End of sequence token for tokenizer")
     parser.add_argument("--ue_parameter_path", type=str, default="db/router.db", help="Path to the method parameters database")
     parser.add_argument("--base_system_prompts", type=str, nargs="*",
-                        default=["You are a helpful AI assistant.", "You are nice friend of human."],
+                        default=["You are a helpful AI assistant."],
                         help="List of base system prompts for pre-caching")
     parser.add_argument("--base_cache_limit", type=int, default=1,
                         help="Maximum number of base caches to maintain (default: 1)")
 
-    return parser.parse_args()
+    # Cache quantization
+    parser.add_argument("--quantize", action="store_true", dest="quantize", default=True,
+        help="Enable quantization for prompt cache (default: True)"
+    )
+    parser.add_argument("--no-quantize", action="store_false", dest="quantize",
+        help="Disable quantization for prompt cache"
+    )
+    parser.add_argument("--qbit", type=int, default=4,
+                        help="Quantization bit for prompt cache, can only be set to 8, 4, 2, 1")
+    parser.add_argument("--q_group_size", type=int, default=32, help="Quantization group size for prompt cache")
+
+    args = parser.parse_args()
+
+    if args.quantize:
+        if args.qbit not in [1, 2, 4, 8]:
+            parser.error("--qbit must be one of: 1, 2, 4, 8")
+        if args.q_group_size not in [8, 16, 32, 64, 128]:
+            parser.error("--q_group_size must be one of: 8, 16, 32, 64, 128")
+
+    return args
 
 
 class ServerConfig:
@@ -182,6 +201,12 @@ class ServerConfig:
 
         self.base_system_prompts = kwargs.get("base_system_prompts", ["You are a helpful AI assistant."])
         self.base_cache_limit = kwargs.get("base_cache_limit", 1)
+
+        # System prompt cache quantizaiton
+        self.quantize = kwargs.get("quantize", False)
+        self.qbit = kwargs.get("qbit", 4)
+        self.q_group_size = kwargs.get("q_group_size", 32)
+
         # Session-level cache storage: {prompt_cache_key: PromptCache}
         self.session_caches = {}
 
@@ -272,10 +297,19 @@ class ModelProvider:
 
                     if prompt_hash not in _base_caches:
                         try:
-                            prompt_cache_obj = PromptCache()
+                            prompt_cache_obj = PromptCache(
+                                quantize=server_config.quantize,
+                                qbit=server_config.qbit,
+                                q_group_size=server_config.q_group_size
+                            )
                             prompt_cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
                             _base_caches[prompt_hash] = prompt_cache_obj
-                            logger.info(f"Pre-cached base system prompt {i + 1} with hash: {prompt_hash}")
+
+                            quant_info = f" (quantized: {server_config.quantize}, " \
+                                         f"qbit: {server_config.qbit}, " \
+                                         f"group size: {server_config.q_group_size})" if \
+                                server_config.quantize else ""
+                            logger.info(f"Pre-cached base system prompt {i + 1} with hash: {prompt_hash}{quant_info}")
                         except Exception as e:
                             logger.warning(f"Failed to pre-cache base system prompt {i + 1}: {e}")
 
@@ -311,7 +345,10 @@ def create_app(args):
         use_default_chat_template=args.use_default_chat_template,
         eos_token=args.eos_token,
         base_system_prompts=args.base_system_prompts,
-        base_cache_limit=args.base_cache_limit
+        base_cache_limit=args.base_cache_limit,
+        quantize=args.quantize,
+        qbit=args.qbit,
+        q_group_size=args.q_group_size
     )
 
     try:
@@ -484,7 +521,10 @@ def create_app(args):
                 info = {
                     "prompt_hash": prompt_hash,
                     "system_tokens_count": len(prompt_cache_obj.system_tokens),
-                    "type": "base_cache"
+                    "type": "base_cache",
+                    "quantized": getattr(prompt_cache_obj, 'quantize', False),
+                    "qbit": getattr(prompt_cache_obj, 'qbit', None),
+                    "q_group_size": getattr(prompt_cache_obj, 'q_group_size', None)
                 }
                 base_cache_info.append(info)
 
@@ -495,7 +535,10 @@ def create_app(args):
                     "system_cached": prompt_cache_obj.system_cached,
                     "system_tokens_count": len(prompt_cache_obj.system_tokens),
                     "conversation_tokens_count": len(prompt_cache_obj.tokens_no_gen),
-                    "type": "session_cache"
+                    "type": "session_cache",
+                    "quantized": getattr(prompt_cache_obj, 'quantize', False),
+                    "qbit": getattr(prompt_cache_obj, 'qbit', None),
+                    "q_group_size": getattr(prompt_cache_obj, 'q_group_size', None)
                 }
                 session_cache_info.append(info)
 
@@ -504,7 +547,12 @@ def create_app(args):
                 "session_caches": session_cache_info,
                 "total_base_caches": len(_base_caches),
                 "total_session_caches": len(server_config.session_caches),
-                "note": "Base caches are pre-computed and shared, session caches are per-request"
+                "note": "Base caches are pre-computed and shared, session caches are per-request",
+                "global_quantize_config": {
+                    "quantize": server_config.quantize,
+                    "qbit": server_config.qbit,
+                    "q_group_size": server_config.q_group_size
+                }
             }
         except Exception as e:
             logger.error(f"Failed to get cache status: {str(e)}")
@@ -587,12 +635,21 @@ def create_app(args):
                     model, tokenizer = model_provider.load(model_path)
 
                     # Create new base cache
-                    prompt_cache_obj = PromptCache()
+                    prompt_cache_obj = PromptCache(
+                        quantize=server_config.quantize,
+                        qbit=server_config.qbit,
+                        q_group_size=server_config.q_group_size
+                    )
                     prompt_cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
                     _base_caches[new_prompt_hash] = prompt_cache_obj
 
+                    quant_info = f" (quantized: {server_config.quantize}, " \
+                                 f"qbit: {server_config.qbit}, " \
+                                 f"group size: {server_config.q_group_size})" if \
+                        server_config.quantize else ""
                     logger.info(
-                        f"Successfully created new base cache with hash: {new_prompt_hash} using model: {model_path}")
+                        f"Successfully created new base cache with hash: {new_prompt_hash}{quant_info} "
+                        f"using model: {model_path}")
 
                     return {
                         "message": "Base cache created successfully",
@@ -602,7 +659,12 @@ def create_app(args):
                         "system_tokens_count": len(prompt_cache_obj.system_tokens),
                         "model_used": request.model,
                         "base_cache_limit": base_cache_limit,
-                        "current_base_cache_count": len(_base_caches)
+                        "current_base_cache_count": len(_base_caches),
+                        "quantize_config": {
+                            "quantized": server_config.quantize,
+                            "qbit": server_config.qbit if server_config.quantize else None,
+                            "q_group_size": server_config.q_group_size if server_config.quantize else None
+                        }
                     }
 
                 except Exception as e:
@@ -794,7 +856,11 @@ def copy_prompt_cache(source_cache_obj: PromptCache, model) -> PromptCache:
     Returns:
         PromptCache: New copy of PromptCache
     """
-    new_cache_obj = PromptCache()
+    new_cache_obj = PromptCache(
+        quantize=source_cache_obj.quantize,
+        qbit=source_cache_obj.qbit,
+        q_group_size=source_cache_obj.q_group_size
+    )
 
     new_cache_obj.model_key = source_cache_obj.model_key
     new_cache_obj.system_cached = source_cache_obj.system_cached
@@ -882,23 +948,13 @@ def cleanup_layer_cache_aggressive(layer_cache):
 
         elif cache_type == 'QuantizedKVCache':
             # Clean quantized cache
-            if hasattr(layer_cache, 'keys') and layer_cache.keys is not None:
-                if isinstance(layer_cache.keys, (list, tuple)):
-                    for i in range(len(layer_cache.keys)):
-                        if layer_cache.keys[i] is not None:
-                            del layer_cache.keys[i]
-                        layer_cache.keys[i] = None
-                del layer_cache.keys
-                layer_cache.keys = None
-
-            if hasattr(layer_cache, 'values') and layer_cache.values is not None:
-                if isinstance(layer_cache.values, (list, tuple)):
-                    for i in range(len(layer_cache.values)):
-                        if layer_cache.values[i] is not None:
-                            del layer_cache.values[i]
-                        layer_cache.values[i] = None
-                del layer_cache.values
-                layer_cache.values = None
+            try:
+                if hasattr(layer_cache, 'keys'):
+                    layer_cache.keys = None
+                if hasattr(layer_cache, 'values'):
+                    layer_cache.values = None
+            except Exception as e:
+                logging.info(f"Could not clean QuantizedKVCache attributes: {e}")
 
         # Reset attributes
         if hasattr(layer_cache, 'offset'):
@@ -1006,7 +1062,11 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
                         logger.debug(f"Copied cache from base cache with hash: {prompt_hash}")
                     else:
                         # Create new cache object
-                        cache_obj = PromptCache()
+                        cache_obj = PromptCache(
+                            quantize=server_config.quantize,
+                            qbit=server_config.qbit,
+                            q_group_size=server_config.q_group_size
+                        )
                         cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
                         logger.debug(
                             f"Created new cache with fresh computation for key: {request.prompt_cache_key}")
