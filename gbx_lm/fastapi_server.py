@@ -293,7 +293,7 @@ class ModelProvider:
             # Pre-cache base system prompts
             if server_config is not None:
                 for i, system_prompt in enumerate(server_config.base_system_prompts):
-                    prompt_hash = hashlib.sha256(system_prompt.strip().encode('utf-8')).hexdigest()[:8]
+                    prompt_hash = hashlib.sha256(system_prompt.encode('utf-8')).hexdigest()[:8]
 
                     if prompt_hash not in _base_caches:
                         try:
@@ -601,7 +601,7 @@ def create_app(args):
             model_path = validate_and_get_model_path(request.model)
             model_lock = server_config.get_model_lock(model_path)
 
-            system_prompt = request.system_prompt.strip()
+            system_prompt = request.system_prompt
 
             # Calculate hash for the new system prompt
             new_prompt_hash = hashlib.sha256(system_prompt.encode('utf-8')).hexdigest()[:8]
@@ -1046,7 +1046,7 @@ def handle_prompt_cache(request, model, tokenizer, prompt):
 
     if request.prompt_cache_key:
         try:
-            system_prompt = get_system_prompt_from_messages(request.messages).strip()
+            system_prompt = get_system_prompt_from_messages(request.messages)
 
             if system_prompt:
                 # First check the session cache
