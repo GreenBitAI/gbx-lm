@@ -601,7 +601,7 @@ def create_app(args):
             model_path = validate_and_get_model_path(request.model)
             model_lock = server_config.get_model_lock(model_path)
 
-            system_prompt = request.system_prompt.strip()
+            system_prompt = request.system_prompt
 
             # Calculate hash for the new system prompt
             new_prompt_hash = hashlib.sha256(system_prompt.encode('utf-8')).hexdigest()[:8]
