@@ -75,6 +75,23 @@ def setup_arg_parser():
         action="store_true",
         help="Enable thinking mode for Qwen3 models",
     )
+    parser.add_argument(
+        "--quantize",
+        action="store_true",
+        help="Enable quantization for prompt cache",
+    )
+    parser.add_argument(
+        "--qbit",
+        type=int,
+        default=8,
+        help="Quantization bit for prompt cache, can only be set to 8, 4, 2, 1",
+    )
+    parser.add_argument(
+        "--q_group_size",
+        type=int,
+        default=64,
+        help="Quantization group size for prompt cache, the default value is 64 in mlx, higher size means less memory usage but less accurate results",
+    )
     return parser
 
 
@@ -98,7 +115,14 @@ def main():
     mlx_cache = None
     system_cache_start = time.time()
     if args.enable_cache:
-        prompt_cache_obj = PromptCache()
+        if args.quantize:
+            prompt_cache_obj = PromptCache(
+                quantize=True,
+                qbit=args.qbit,
+                q_group_size=args.q_group_size,
+            )
+        else:
+            prompt_cache_obj = PromptCache()
         print("Pre-caching system prompt...")
         prompt_cache_obj.cache_system_prompt(model, args.system_prompt, tokenizer)
     else:
@@ -122,13 +146,23 @@ def main():
                     max_tokens=args.max_tokens, prompt_cache=prompt_cache_obj,
                     use_cache=args.enable_cache
                 )
+                mx.eval([c.state for c in prompt_cache_obj.cache])
+                mx.metal.clear_cache() # clear the GPU usage for generation process
+                mx.clear_cache()# clear the CPU usage for generation process
+
                 messages.append({"role": "assistant", "content": response_text})
                 prompt_cache_obj.update_after_step(messages, tokenizer)
+                mx.clear_cache()
+
             else:
                 response_text = generate_response(
                     model, tokenizer, messages, args.model, max_tokens=args.max_tokens,
                     prompt_cache=mlx_cache, use_cache=args.enable_cache
                 )
+                mx.eval([c.state for c in mlx_cache])
+                mx.metal.clear_cache()
+                mx.clear_cache()
+
         else:
             if args.enable_cache and prompt_cache_obj:
                 input_ids_with_gen = tokenizer.apply_chat_template(
@@ -163,9 +197,15 @@ def main():
                 ):
                     print(response.text, flush=True, end="")
                     response_text += response.text
-                
+
+                del tokens_to_process, input_ids_with_gen, input_ids_no_gen
+                mx.eval([c.state for c in cache])
+                mx.metal.clear_cache()
+                mx.clear_cache()
+
                 messages.append({"role": "assistant", "content": response_text})
                 prompt_cache_obj.update_after_step(messages, tokenizer, enable_thinking)
+                mx.clear_cache()
             else:
                 prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
                 for response in stream_generate(
@@ -177,6 +217,9 @@ def main():
                     prompt_cache=mlx_cache,
                 ):
                     print(response.text, flush=True, end="")
+                mx.eval([c.state for c in mlx_cache])
+                mx.metal.clear_cache()
+                mx.clear_cache()
 
         generation_end_time = time.time()
         generation_time = generation_end_time - generation_start_time

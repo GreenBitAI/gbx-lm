@@ -12,7 +12,7 @@ class PromptCache:
     2. I add pre-cache system prompt
     """
     
-    def __init__(self):
+    def __init__(self, quantize: bool = False, qbit=None, q_group_size=None):
         self.cache = None
         # store the conversation tokens WITHOUT generation prompt for consistent caching
         self.tokens_no_gen = [] 
@@ -20,6 +20,9 @@ class PromptCache:
         # track if system prompt is cached (optimization for multi-conversation reuse)
         self.system_cached = False
         self.system_tokens = []
+        self.quantize = quantize # to control whether to quantize cache or not
+        self.qbit = qbit
+        self.q_group_size = q_group_size
 
     def _common_prefix(self, a, b):
         """Find the length of the common prefix between two token sequences."""
@@ -28,7 +31,27 @@ class PromptCache:
         while i < n and a[i] == b[i]:
             i += 1
         return i
-
+    
+    def _new_cache(self, model):
+        """
+        Create a new prompt cache for the given model.
+        """
+        base_cache = make_prompt_cache(model)
+        return base_cache
+    
+    def _quantize_cache(self, cache):
+        if not self.quantize or cache is None:
+            return cache
+        quantized_cache = []
+        for c in cache:
+        # don't add max-kv-size when making a prompt cache, because that will build rotatingkvcache and trigger NotImplementedError
+        # rotatingkvcache doesn't support quantization
+            if hasattr(c, "to_quantized"):
+                quantized_cache.append(c.to_quantized(self.q_group_size, self.qbit))
+            else:
+                quantized_cache.append(c)
+        return quantized_cache
+    
     def cache_system_prompt(self, model, system_prompt, tokenizer):
         """
         Pre-cache the system prompt to ensure it's always available.
@@ -43,15 +66,18 @@ class PromptCache:
         self.system_tokens = tokenizer.apply_chat_template(
             system_messages, add_generation_prompt=False, enable_thinking=False
         )
-        self.cache = make_prompt_cache(model)
         self.model_key = model_key
 
         # pre-compute the system prompt through the model: pre-cache system prompt
+        base_cache = self._new_cache(model)
         system_array = mx.array([self.system_tokens])
-        model(system_array, cache=self.cache)
-        mx.eval([c.state for c in self.cache])
+        model(system_array, cache=base_cache)
+        mx.eval([c.state for c in base_cache])
         mx.clear_cache()
         
+        quantized_cache = self._quantize_cache(base_cache)
+        self.cache = quantized_cache
+
         self.system_cached = True
         self.tokens_no_gen = list(self.system_tokens)
         print(f"System prompt cached: {len(self.system_tokens)} tokens")
@@ -72,7 +98,8 @@ class PromptCache:
         """
         # IF there is no existing cache OR the model changed to another one - start new cache
         if self.cache is None or self.model_key != model_key:
-            self.cache = make_prompt_cache(model)
+            base_cache = self._new_cache(model)
+            self.cache = self._quantize_cache(base_cache)
             self.model_key = model_key
             self.tokens_no_gen = list(tokens_no_gen)
             self.system_cached = False
@@ -81,7 +108,8 @@ class PromptCache:
         # If system prompt is cached but current tokens don't start with it, start new cache
         if self.system_cached:
             if not tokens_no_gen[:len(self.system_tokens)] == self.system_tokens:
-                self.cache = make_prompt_cache(model)
+                base_cache = self._new_cache(model)
+                self.cache = self._quantize_cache(base_cache)
                 self.tokens_no_gen = list(tokens_no_gen)
                 self.system_cached = False
                 return tokens_with_gen, self.cache, False
@@ -103,7 +131,8 @@ class PromptCache:
                 return tokens_to_process, self.cache, True
             else:
                 # If the cache miss completely - start over
-                self.cache = make_prompt_cache(model)
+                base_cache = self._new_cache(model)
+                self.cache = self._quantize_cache(base_cache)
                 self.tokens_no_gen = list(tokens_no_gen)
                 self.system_cached = False
                 return tokens_with_gen, self.cache, False
