@@ -165,6 +165,8 @@ def parse_args():
     parser.add_argument("--base_system_prompts", type=str, nargs="*",
                         default=["You are a helpful AI assistant.", "You are nice friend of human."],
                         help="List of base system prompts for pre-caching")
+    parser.add_argument("--base_cache_limit", type=int, default=1,
+                        help="Maximum number of base caches to maintain (default: 1)")
 
     return parser.parse_args()
 
@@ -179,6 +181,7 @@ class ServerConfig:
         self.model_locks = {}
 
         self.base_system_prompts = kwargs.get("base_system_prompts", ["You are a helpful AI assistant."])
+        self.base_cache_limit = kwargs.get("base_cache_limit", 1)
         # Session-level cache storage: {prompt_cache_key: PromptCache}
         self.session_caches = {}
 
@@ -307,7 +310,8 @@ def create_app(args):
         chat_template=args.chat_template,
         use_default_chat_template=args.use_default_chat_template,
         eos_token=args.eos_token,
-        base_system_prompts=args.base_system_prompts
+        base_system_prompts=args.base_system_prompts,
+        base_cache_limit=args.base_cache_limit
     )
 
     try:
@@ -442,7 +446,8 @@ def create_app(args):
                     "/v1/chat/completions",
                     "/v1/models",
                     "/v1/prompt_cache_status",
-                    "/v1/prompt_cache/{cache_key}"
+                    "/v1/prompt_cache/{cache_key}",
+                    "/v1/base_cache"
                 ]
             }
         except Exception as e:
@@ -534,6 +539,85 @@ def create_app(args):
             logger.error(f"Failed to delete prompt cache '{cache_key}': {str(e)}")
             raise HTTPException(status_code=500, detail=str(e))
 
+    @app.post("/v1/base_cache")
+    async def create_base_cache(request: CreateBaseCacheRequest):
+        """Create or update base cache for the specified system prompt using the specified model"""
+        try:
+            if not request.system_prompt or not request.system_prompt.strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="System prompt cannot be empty"
+                )
+
+            # Verify and get the model path
+            model_path = validate_and_get_model_path(request.model)
+            model_lock = server_config.get_model_lock(model_path)
+
+            system_prompt = request.system_prompt.strip()
+
+            # Calculate hash for the new system prompt
+            new_prompt_hash = hashlib.sha256(system_prompt.encode('utf-8')).hexdigest()[:8]
+
+            # Check if the same system prompt already exists
+            if new_prompt_hash in _base_caches:
+                logger.info(f"Base cache with hash {new_prompt_hash} already exists, no action needed")
+                return {
+                    "message": "Base cache already exists for this system prompt",
+                    "prompt_hash": new_prompt_hash,
+                    "action": "none",
+                    "cache_status": "existing"
+                }
+
+            async with model_lock:
+                # Use configurable base cache limit
+                base_cache_limit = server_config.base_cache_limit
+
+                if len(_base_caches) >= base_cache_limit:
+                    # Remove existing base caches until we're under the limit
+                    excess_count = len(_base_caches) - base_cache_limit + 1  # +1 because we're adding a new one
+                    old_hashes = list(_base_caches.keys())[:excess_count]
+
+                    for old_hash in old_hashes:
+                        cleanup_success = cleanup_base_cache(old_hash)
+                        if not cleanup_success:
+                            logger.warning(f"Failed to cleanup old base cache: {old_hash}")
+
+                try:
+                    # Load the model and tokenizer
+                    model, tokenizer = model_provider.load(model_path)
+
+                    # Create new base cache
+                    prompt_cache_obj = PromptCache()
+                    prompt_cache_obj.cache_system_prompt(model, system_prompt, tokenizer)
+                    _base_caches[new_prompt_hash] = prompt_cache_obj
+
+                    logger.info(
+                        f"Successfully created new base cache with hash: {new_prompt_hash} using model: {model_path}")
+
+                    return {
+                        "message": "Base cache created successfully",
+                        "prompt_hash": new_prompt_hash,
+                        "action": "created",
+                        "cache_status": "new",
+                        "system_tokens_count": len(prompt_cache_obj.system_tokens),
+                        "model_used": request.model,
+                        "base_cache_limit": base_cache_limit,
+                        "current_base_cache_count": len(_base_caches)
+                    }
+
+                except Exception as e:
+                    logger.error(f"Failed to create base cache: {str(e)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail=f"Failed to create base cache: {str(e)}"
+                    )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Base cache creation request failed: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.exception_handler(Exception)
     async def global_exception_handler(request, exc):
         logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
@@ -577,6 +661,11 @@ class ChatCompletionRequest(BaseModel):
     enable_thinking: Optional[bool] = None  # Qwen3 Model only feature
     prompt_cache_key: Optional[str] = None
     use_eminf: bool = False
+
+
+class CreateBaseCacheRequest(BaseModel):
+    system_prompt: str = Field(..., description="The system prompt to cache")
+    model: str = Field(..., description="The model to use for caching")
 
 
 def ensure_deep_copy_cache_state(src_cache):
@@ -850,6 +939,40 @@ def deep_cleanup_session_cache(cache_key: str, session_caches: Dict) -> bool:
 
     except Exception as e:
         logging.error(f"Deep cleanup failed for {cache_key}: {e}")
+        return False
+
+
+def cleanup_base_cache(prompt_hash: str) -> bool:
+    """
+    Clean up a specific base cache object.
+
+    Args:
+        prompt_hash: The hash key of the base cache to clean up
+
+    Returns:
+        bool: True if cleanup was successful, False otherwise
+    """
+    if prompt_hash not in _base_caches:
+        return False
+
+    try:
+        cache_obj = _base_caches[prompt_hash]
+
+        # Use safe cleanup for base cache
+        safe_cleanup_independent_cache(cache_obj)
+
+        # Remove from dictionary
+        del _base_caches[prompt_hash]
+
+        # Force garbage collection
+        gc.collect()
+        mx.clear_cache()
+
+        logger.info(f"Successfully cleaned up base cache: {prompt_hash}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to cleanup base cache '{prompt_hash}': {str(e)}")
         return False
 
 def handle_prompt_cache(request, model, tokenizer, prompt):
