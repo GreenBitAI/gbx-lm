@@ -116,13 +116,13 @@ def main():
     system_cache_start = time.time()
     if args.enable_cache:
         if args.quantize:
-            prompt_cache_obj = PromptCache(
+            prompt_cache_obj = PromptCache(model_name=args.model,
                 quantize=True,
                 qbit=args.qbit,
                 q_group_size=args.q_group_size,
             )
         else:
-            prompt_cache_obj = PromptCache()
+            prompt_cache_obj = PromptCache(model_name=args.model)
         print("Pre-caching system prompt...")
         prompt_cache_obj.cache_system_prompt(model, args.system_prompt, tokenizer)
     else:
@@ -141,17 +141,13 @@ def main():
         generation_start_time = time.time()
         if args.infer_opt is not None:
             if args.enable_cache and prompt_cache_obj:
-                response_text = generate_response(
+                response_text, generated_ids = generate_response(
                     model, tokenizer, messages, args.model,
                     max_tokens=args.max_tokens, prompt_cache=prompt_cache_obj,
                     use_cache=args.enable_cache
                 )
-                mx.eval([c.state for c in prompt_cache_obj.cache])
-                mx.metal.clear_cache() # clear the GPU usage for generation process
-                mx.clear_cache()# clear the CPU usage for generation process
-
                 messages.append({"role": "assistant", "content": response_text})
-                prompt_cache_obj.update_after_step(messages, tokenizer)
+                prompt_cache_obj.update_after_step(generated_ids, messages, tokenizer)
                 mx.clear_cache()
 
             else:
@@ -160,7 +156,6 @@ def main():
                     prompt_cache=mlx_cache, use_cache=args.enable_cache
                 )
                 mx.eval([c.state for c in mlx_cache])
-                mx.metal.clear_cache()
                 mx.clear_cache()
 
         else:
@@ -187,6 +182,7 @@ def main():
                 else:
                     print(f"No cache benefit - processing all {len(input_ids_with_gen)} tokens")
                 response_text = ""
+                generated_token_ids = []
                 for response in stream_generate(
                     model,
                     tokenizer,
@@ -197,14 +193,10 @@ def main():
                 ):
                     print(response.text, flush=True, end="")
                     response_text += response.text
-
-                del tokens_to_process, input_ids_with_gen, input_ids_no_gen
-                mx.eval([c.state for c in cache])
-                mx.metal.clear_cache()
-                mx.clear_cache()
+                    generated_token_ids.append(response.token)
 
                 messages.append({"role": "assistant", "content": response_text})
-                prompt_cache_obj.update_after_step(messages, tokenizer, enable_thinking)
+                prompt_cache_obj.update_after_step(generated_token_ids, messages, tokenizer)
                 mx.clear_cache()
             else:
                 prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
@@ -218,7 +210,6 @@ def main():
                 ):
                     print(response.text, flush=True, end="")
                 mx.eval([c.state for c in mlx_cache])
-                mx.metal.clear_cache()
                 mx.clear_cache()
 
         generation_end_time = time.time()
