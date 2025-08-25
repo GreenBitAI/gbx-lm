@@ -1,6 +1,6 @@
 import mlx.core as mx
-from gbx_lm.models.cache import can_trim_prompt_cache, make_prompt_cache, trim_prompt_cache
-
+from gbx_lm.models.cache import make_prompt_cache
+from gbx_lm.examples.config import ModelConfig
 class PromptCache:
     """
     This prompt cache has some differences from the origianl MLX prompt cache.
@@ -12,11 +12,13 @@ class PromptCache:
     2. I add pre-cache system prompt
     """
     
-    def __init__(self, quantize: bool = False, qbit=None, q_group_size=None):
+    def __init__(self, model_name: str, quantize: bool = False, qbit=None, q_group_size=None):
         self.cache = None
         # store the conversation tokens WITHOUT generation prompt for consistent caching
         self.tokens_no_gen = [] 
         self.model_key = None
+        self.model_name = model_name
+        self.model_config = ModelConfig.get_config(model_name)
         # track if system prompt is cached (optimization for multi-conversation reuse)
         self.system_cached = False
         self.system_tokens = []
@@ -123,7 +125,7 @@ class PromptCache:
             # use the system cache and just process the new conversation
             if self.system_cached and prefix_len >= len(self.system_tokens):
                 # only process the new conversation part + generation suffix
-                new_tokens_no_gen = tokens_no_gen[len(self.system_tokens):]
+                new_tokens_no_gen = tokens_no_gen[prefix_len:] #the new tokens should start after the common prefix
                 gen_suffix_len = len(tokens_with_gen) - len(tokens_no_gen) 
                 gen_suffix = tokens_with_gen[-gen_suffix_len:] if gen_suffix_len > 0 else []
                 tokens_to_process = list(new_tokens_no_gen) + list(gen_suffix)
@@ -147,23 +149,18 @@ class PromptCache:
         self.tokens_no_gen = list(tokens_no_gen)
         return tokens_to_process, self.cache, True
 
-    def update_after_step(self, messages, tokenizer, enable_thinking=False):
+    def update_after_step(self, generated_token_ids, messages, tokenizer):
         """
-        After generation, trim the generation suffix(e.g. <assistant>, /n, etc.) so the cache matches no-gen prefix.
-        Without this step, the cache would contain generation prompt tokens that don't match the actual conversation state, causing cache misses.
+        update tokens no gen
         """
-        if not self.cache:
-            return
-        try:
-            tokens_with_gen = tokenizer.apply_chat_template(
-                messages, add_generation_prompt=True, enable_thinking=enable_thinking
-            )
-            tokens_no_gen = tokenizer.apply_chat_template(
-                messages, add_generation_prompt=False, enable_thinking=enable_thinking
-            )
-            # calculate tokens to trim (the generation prompt)
-            num_to_trim = len(tokens_with_gen) - len(tokens_no_gen)
-            if num_to_trim > 0 and can_trim_prompt_cache(self.cache):
-                trim_prompt_cache(self.cache, num_to_trim)
-        except Exception:
-            pass
+        if self.model_config["use_update_after_step"]: #if the model is qwen3/llama3 series models, this will be true
+            generation_tokens = self.model_config["generation_tokens"] #the generation tokens are "<imstart>"
+            self.tokens_no_gen.extend(generation_tokens)
+            self.tokens_no_gen.extend(generated_token_ids) #update self.tokens_no_gen with the newly generated assistant response tokens
+        else:
+            self.tokens_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=False)
+            #if the model is deepseek series models, to avoid the effect of thinking part, we can directly use apply_chat_template to update self.tokens_no_gen
+        self.system_cached = (
+            len(self.system_tokens) > 0 and
+            self.tokens_no_gen[:len(self.system_tokens)] == self.system_tokens
+        )
