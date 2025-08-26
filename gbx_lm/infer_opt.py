@@ -163,7 +163,7 @@ def generate_response(
     )
     response = tokenizer.decode(np.array(generated_ids), skip_special_tokens=True)
     response = response.strip()
-    return response, generated_ids
+    return response
 
 def eminf_generate_step(
     model, tokenizer, input_ids, input_ids_no_gen, max_tokens, num_steps=None, alpha=0.65,

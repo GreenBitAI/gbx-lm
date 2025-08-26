@@ -1,6 +1,6 @@
 import mlx.core as mx
 from gbx_lm.models.cache import make_prompt_cache
-from gbx_lm.examples.config import ModelConfig
+
 class PromptCache:
     """
     This prompt cache has some differences from the origianl MLX prompt cache.
@@ -12,14 +12,11 @@ class PromptCache:
     2. I add pre-cache system prompt
     """
     
-    def __init__(self, model_name: str, quantize: bool = False, qbit=None, q_group_size=None):
+    def __init__(self, quantize: bool = False, qbit=None, q_group_size=None):
         self.cache = None
         # store the conversation tokens WITHOUT generation prompt for consistent caching
         self.tokens_no_gen = [] 
         self.model_key = None
-        self.model_name = model_name
-        self.model_config = ModelConfig.get_config(model_name)
-        # track if system prompt is cached (optimization for multi-conversation reuse)
         self.system_cached = False
         self.system_tokens = []
         self.quantize = quantize # to control whether to quantize cache or not
@@ -149,17 +146,12 @@ class PromptCache:
         self.tokens_no_gen = list(tokens_no_gen)
         return tokens_to_process, self.cache, True
 
-    def update_after_step(self, generated_token_ids, messages, tokenizer):
+    def update_after_step(self, response_text, tokenizer):
         """
         update tokens no gen
         """
-        if self.model_config["use_update_after_step"]: #if the model is qwen3/llama3 series models, this will be true
-            generation_tokens = self.model_config["generation_tokens"] #the generation tokens are "<imstart>"
-            self.tokens_no_gen.extend(generation_tokens)
-            self.tokens_no_gen.extend(generated_token_ids) #update self.tokens_no_gen with the newly generated assistant response tokens
-        else:
-            self.tokens_no_gen = tokenizer.apply_chat_template(messages, add_generation_prompt=False, enable_thinking=False)
-            #if the model is deepseek series models, to avoid the effect of thinking part, we can directly use apply_chat_template to update self.tokens_no_gen
+        response_tokens = tokenizer.apply_chat_template([{"role": "assistant", "content": response_text}], add_generation_prompt=False, enable_thinking=False)
+        self.tokens_no_gen.extend(response_tokens)
         self.system_cached = (
             len(self.system_tokens) > 0 and
             self.tokens_no_gen[:len(self.system_tokens)] == self.system_tokens

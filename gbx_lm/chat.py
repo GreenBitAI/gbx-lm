@@ -116,13 +116,13 @@ def main():
     system_cache_start = time.time()
     if args.enable_cache:
         if args.quantize:
-            prompt_cache_obj = PromptCache(model_name=args.model,
+            prompt_cache_obj = PromptCache(
                 quantize=True,
                 qbit=args.qbit,
                 q_group_size=args.q_group_size,
             )
         else:
-            prompt_cache_obj = PromptCache(model_name=args.model)
+            prompt_cache_obj = PromptCache()
         print("Pre-caching system prompt...")
         prompt_cache_obj.cache_system_prompt(model, args.system_prompt, tokenizer)
     else:
@@ -141,13 +141,13 @@ def main():
         generation_start_time = time.time()
         if args.infer_opt is not None:
             if args.enable_cache and prompt_cache_obj:
-                response_text, generated_ids = generate_response(
+                response_text = generate_response(
                     model, tokenizer, messages, args.model,
                     max_tokens=args.max_tokens, prompt_cache=prompt_cache_obj,
                     use_cache=args.enable_cache
                 )
+                prompt_cache_obj.update_after_step(response_text, tokenizer)
                 messages.append({"role": "assistant", "content": response_text})
-                prompt_cache_obj.update_after_step(generated_ids, messages, tokenizer)
                 mx.clear_cache()
 
             else:
@@ -182,7 +182,6 @@ def main():
                 else:
                     print(f"No cache benefit - processing all {len(input_ids_with_gen)} tokens")
                 response_text = ""
-                generated_token_ids = []
                 for response in stream_generate(
                     model,
                     tokenizer,
@@ -193,10 +192,8 @@ def main():
                 ):
                     print(response.text, flush=True, end="")
                     response_text += response.text
-                    generated_token_ids.append(response.token)
-
+                prompt_cache_obj.update_after_step(response_text,tokenizer)
                 messages.append({"role": "assistant", "content": response_text})
-                prompt_cache_obj.update_after_step(generated_token_ids, messages, tokenizer)
                 mx.clear_cache()
             else:
                 prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
