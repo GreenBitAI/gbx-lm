@@ -116,13 +116,13 @@ def main():
     system_cache_start = time.time()
     if args.enable_cache:
         if args.quantize:
-            prompt_cache_obj = PromptCache(model_name=args.model,
+            prompt_cache_obj = PromptCache(
                 quantize=True,
                 qbit=args.qbit,
                 q_group_size=args.q_group_size,
             )
         else:
-            prompt_cache_obj = PromptCache(model_name=args.model)
+            prompt_cache_obj = PromptCache()
         print("Pre-caching system prompt...")
         prompt_cache_obj.cache_system_prompt(model, args.system_prompt, tokenizer)
     else:
