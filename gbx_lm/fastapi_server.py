@@ -1269,12 +1269,11 @@ async def stream_chat_completion(prompt, request, model, tokenizer):
     generated_text = "".join(generated_text_parts)
     if request.prompt_cache_key and cache_obj:
         try:
-            updated_messages = request.messages + [{"role": "assistant", "content": generated_text}]
-            enable_thinking = getattr(request, 'enable_thinking', False)
-            cache_obj.update_after_step(updated_messages, tokenizer, enable_thinking)
+            cache_obj.update_after_step(generated_text, tokenizer)
 
+            updated_messages = request.messages + [{"role": "assistant", "content": generated_text}]
             logger.info(
-                f"Using EMINF optimization for generation; updated cache object: "
+                f"Updated cache object: "
                 f"message length {len(request.messages)} → {len(updated_messages)}"
             )
         except Exception as e:
@@ -1541,12 +1540,11 @@ async def generate_chat_completion(prompt, request, model, tokenizer):
         # update prompt cache state
         if request.prompt_cache_key and cache_obj:
             try:
-                updated_messages = request.messages + [{"role": "assistant", "content": text}]
-                enable_thinking = getattr(request, 'enable_thinking', False)
-                cache_obj.update_after_step(updated_messages, tokenizer, enable_thinking)
+                cache_obj.update_after_step(text, tokenizer)
 
+                updated_messages = request.messages + [{"role": "assistant", "content": text}]
                 logger.info(
-                    f"Using EMINF optimization for generation; updated cache object: "
+                    f"Updated cache object: "
                     f"message length {len(request.messages)} → { len(updated_messages)}"
                 )
             except Exception as e:
