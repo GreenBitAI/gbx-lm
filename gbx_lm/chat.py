@@ -182,7 +182,6 @@ def main():
                 else:
                     print(f"No cache benefit - processing all {len(input_ids_with_gen)} tokens")
                 response_text = ""
-                generated_token_ids = []
                 for response in stream_generate(
                     model,
                     tokenizer,
