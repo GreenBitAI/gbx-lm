@@ -1,177 +1,211 @@
-# GBA Model Toolkit for MLX
+# gbx-lm
 
-## Introduction
-Welcome to the GreenBitAI (GBA) Model Toolkit for [MLX](https://github.com/ml-explore/mlx)! This comprehensive Python package not only facilitates the conversion of [GreenBitAI's Low-bit Language Models (LLMs)](https://huggingface.co/collections/GreenBitAI/greenbitai-mlx-llm-6614eb6ceb8da657c2b4ed58) to MLX framework compatible format but also supports generation, model loading, and other essential scripts tailored for GBA quantized models. Designed to enhance the integration and deployment of GBA models within the MLX ecosystem, this toolkit enables the efficient execution of GBA models on a variety of platforms, with special optimizations for Apple devices to enable local inference and natural language content generation. 
+> **Note:** the source code in this repository is an older version and is no
+> longer where gbx-lm is developed. gbx-lm now ships as a signed binary, and
+> the binary is the reference: use the [latest release](https://github.com/GreenBitAI/gbx-lm/releases/latest)
+> rather than installing from this source.
 
-## Installation
-
-To get started with this package, simply run:
-```bash
-pip install gbx-lm
-```
-Optional dependencies: gbx-lm supports various optional features that can be installed as needed:
-
-```bash
-# Install with LangChain integration
-pip install gbx-lm[langchain]
-
-# Install with support for MLX-LM models in FastAPI server
-pip install gbx-lm[mlx-lm]
-
-# Install with development tools (testing)
-pip install gbx-lm[dev]
-
-# Install all optional dependencies
-pip install gbx-lm[all]
-```
-Each extension provides specific functionality:
-- langchain: Integration with LangChain for building AI applications
-- mlx-lm: Support for loading and serving MLX-LM community models
-- dev: Development and testing utilities
-
-Or clone the repository and install the required dependencies (for Python >= 3.9):
-```bash
-git clone https://github.com/GreenBitAI/gbx-lm.git
-```
-
-via `requirements.txt` file:
-```bash
-pip install -r requirements.txt
-```
-
-or via `setup.py`:
-```bash
-# Basic editable installation
-pip install -e . -v
-
-# Install editable mode plus specific optional dependencies
-pip install -e ".[langchain]" -v
-pip install -e ".[mlx-lm]" -v
-pip install -e ".[dev]" -v
-
-# Install all optional dependencies
-pip install -e ".[all]" -v
-```
-Alternatively you can also use the prepared conda environment configuration:
-```bash
-conda env create -f environment.yml
-conda activate gbai_mlx_lm
-```
-
-## Usage
-
-### Generating Content
-To generate natural language content using a converted model:
-
-- Example using terminal:
-```bash
-python -m gbx_lm.generate --model GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx  --max-tokens 100 --prompt "calculate 4*8+1024="
-```
-
-- Example code integration:
-```bash
-from gbx_lm import load, generate
-
-model, tokenizer = load("GreenBitAI/Llama-3.2-3B-Instruct-layer-mix-bpw-4.0-mlx")
-
-prompt = "What is the capital of France?"
-
-if tokenizer.chat_template is not None:
-    messages = [{"role": "user", "content": prompt}]
-    prompt = tokenizer.apply_chat_template(
-        messages, add_generation_prompt=True
-    )
-
-response = generate(model, tokenizer, prompt=prompt, verbose=True)
-print(response)
-```
-
-### Interactive Chat
-```bash
-python -m gbx_lm.chat --model GreenBitAI/Llama-3.2-3B-Instruct-layer-mix-bpw-4.0-mlx  --max-tokens 100
-```
-
-### Managing Local Model
-You can use the following scripts to explore and delete local models stored in the Hugging Face cache.
-```shell
-# List local models
-python -m gbx_lm.manage --scan
-
-# Specify a `--pattern`:
-python -m gbx_lm.manage --scan --pattern GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-2.2-mlx
-
-# To delete a model
-python -m gbx_lm.manage --delete --pattern GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-2.2-mlx
-```
-
-### FastAPI Model Server
-A high-performance HTTP API for text generation with GreenBitAI's mlx models. Improvements over the original `mlx-lm/server.py`:
-
-- **Concurrent Processing**: Handles multiple requests simultaneously
-- **Enhanced Performance**: Faster response times and better resource utilization
-- **Robust Validation**: Automatic request validation and error handling
-- **Interactive Docs**: Built-in Swagger UI for easy testing
- 
-#### Quick Start
-1. Run:
-   ```shell
-   python -m gbx_lm.fastapi_server --model GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx
-   ```
-2. Use:
-   ```shell
-   # Chat
-   curl http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" \
-     -d '{"model": "default_model", "messages": [{"role": "user", "content": "Hello!"}]}'
-   
-   # Chat stream
-   curl http://localhost:8000/v1/chat/completions -H "Content-Type: application/json"  \
-     -d '{"model": "default_model", "messages": [{"role": "user", "content": "Hello!"}], "stream": "True"}'
-   ```
-3. To enable support for MLX-LM community models:
-   ```bash
-   pip install gbx-lm[mlx-lm]
-   ```
-   Then you can use models from the mlx-community organization:
-   ```bash
-   python -m gbx_lm.fastapi_server --model mlx-community/Qwen3-4B-4bit
-   ```
-
-#### Features
-- Chat and text completion endpoints
-- Streaming responses
-- Customizable generation parameters
-- Support for custom models and adapters
-
-For API details, visit `http://localhost:8000/docs` after starting the server.
-
-> Note: Not recommended for production without additional security measures.
-
-### Converting Models
-To convert a GreenBitAI's Low-bit LLM to the MLX format, run:
-```bash
-python -m gbx_lm.gba2mlx --hf-path <input file path or a Hugging Face repo> --mlx-path <output file path> --hf-token <your huggingface token> --upload-repo <a Hugging Face repo name>
-
-# Example
-python -m gbx_lm.gba2mlx --hf-path GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0 --mlx-path Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx/ --hf-token <your huggingface token> --upload-repo GreenBitAI/Llama-3-8B-instruct-layer-mix-bpw-4.0-mlx
-```
-
-### Evaluating Models
-To evaluate a model, run:
-```bash
-gbx_lm.evaluate \
-    --model <gbx_mlx_model or mlx_community_model> \
-    --output-dir eval_output \
-    --tasks winogrande boolq arc_challenge arc_easy hellaswag openbookqa piqa social_iqa \
-    --apply-chat-template \
-    --no-enable-thinking   
-```
+gbx-lm is a local inference server for Apple Silicon. It runs GreenBitAI's
+models for the Mac -- including builds that page their experts from disk and
+ship their own draft heads for speculative decoding -- as well as MLX models
+from [mlx-community](https://huggingface.co/mlx-community), and serves them
+behind the APIs that existing tools already speak: OpenAI's Chat Completions
+and Responses, and Anthropic's Messages.
 
 ## Requirements
-- Python >= 3.9
-- See `setup.py` for a complete list of dependencies
 
-## License
-The original code was released under its respective license and copyrights, i.e.:
+| | |
+| --- | --- |
+| macOS | **15.0 or later** |
+| chip | **Apple Silicon** (arm64). There is no Intel build. |
+| Python | none -- the binary carries what it needs |
 
-- `generate.py`, `lora.py`, `*utils.py`, `tuner/*.py` and `models/*.py` etc. released under the [MIT License](https://github.com/ml-explore/mlx-examples/blob/main/LICENSE) in [ml-explore/mlx-lm](https://github.com/ml-explore/mlx-lm).
-- We release our changes and additions to these files under the [Apache 2.0 License](LICENSE).
+## Install
+
+```bash
+# upgrading? clear the previous version's unpack directory first
+rm -rf ~/.libra/cache/onefile/gbx_lm
+
+curl -fL -o gbx_lm-darwin-arm64.tar.gz 'https://github.com/GreenBitAI/gbx-lm/releases/latest/download/gbx_lm-darwin-arm64.tar.gz' \
+  && tar -xzf gbx_lm-darwin-arm64.tar.gz gbx_lm \
+  && mkdir -p "$HOME/.local/bin" \
+  && mv gbx_lm "$HOME/.local/bin/gbx_lm" \
+  && chmod +x "$HOME/.local/bin/gbx_lm"
+
+gbx_lm -h
+```
+
+The build is signed with a Developer ID and notarised, so macOS runs it without
+the usual detour for a downloaded binary.
+
+**`command not found`** -- `$HOME/.local/bin` is not on your `PATH`:
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc     # zsh
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bash_profile && source ~/.bash_profile   # bash
+```
+
+**`Killed: 9`** -- a previous version's files are still in the unpack directory,
+and macOS refuses to mix two builds. Run the `rm -rf` line above, then try again.
+
+## Run
+
+```bash
+gbx_lm --model GreenBitAI/Qwen3.8-Flash-Next-4bit-paged
+```
+
+That serves the model on port **11688**, the default; `--port` picks another.
+The weights download on first use into `~/.libra/cache/models`. Set `HF_HOME` to
+put them elsewhere, and `HF_TOKEN` if you meet the Hub's rate limits for
+anonymous downloads.
+
+```bash
+curl http://127.0.0.1:11688/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"GreenBitAI/Qwen3.8-Flash-Next-4bit-paged","messages":[{"role":"user","content":"Hello"}]}'
+```
+
+The server listens on every network interface (`0.0.0.0`) unless told
+otherwise, so other machines on your network can reach it. To keep it to this
+Mac, add `--host 127.0.0.1`.
+
+`gbx_lm -h` lists every option. The ones most often wanted:
+
+| option | what it does |
+| --- | --- |
+| `--model` | the model to serve: a Hugging Face repo id or a local path |
+| `--model_list` | several models at once, chosen per request by the `model` field |
+| `--host` / `--port` | where to listen (default `0.0.0.0:11688`) |
+| `--max_kv_size` | cap on the context kept in memory; sized from the machine's RAM if not given |
+| `--prefill_step_size` | tokens per prefill step; lower uses less memory; sized from RAM if not given |
+| `--log-level` | `TRACE` to `CRITICAL` (default `INFO`) |
+
+## Models
+
+### GreenBitAI builds
+
+Each has a model card with its measurements and the details that are particular
+to it. All six carry a draft head in `mtp/`; it is off unless its switch is set.
+
+| model | draft head switch | context |
+| --- | --- | --- |
+| [DeepSeek-V4.1-Flash-4bit-paged](https://huggingface.co/GreenBitAI/DeepSeek-V4.1-Flash-4bit-paged) | `GBX_DEEPSEEK_MTP=on` | 1,048,576 |
+| [GLM-5.3-Flash-4bit-paged](https://huggingface.co/GreenBitAI/GLM-5.3-Flash-4bit-paged) | `GBX_GLM53_MTP=on` | 1,048,576 |
+| [Qwen3.8-Flash-Next-4bit-paged](https://huggingface.co/GreenBitAI/Qwen3.8-Flash-Next-4bit-paged) | `GBX_QWEN4_MTP=on` | 262,144 |
+| [Qwen3.6-35B-A3B-4bit-paged](https://huggingface.co/GreenBitAI/Qwen3.6-35B-A3B-4bit-paged) | `GBX_QWEN35_MTP=on` | 262,144 |
+| [Qwen3.6-35B-A3B-8bit-paged](https://huggingface.co/GreenBitAI/Qwen3.6-35B-A3B-8bit-paged) | `GBX_QWEN35_MTP=on` | 262,144 |
+| [Qwen3.8-27B-4bit](https://huggingface.co/GreenBitAI/Qwen3.8-27B-4bit) | `GBX_QWEN35_MTP=on` | 262,144 |
+
+They are collected at
+[GreenBitAI for Apple Silicon](https://huggingface.co/collections/GreenBitAI/greenbitai-for-apple-silicon-6ab6ab6002fbd9988db33833).
+
+```bash
+GBX_QWEN4_MTP=on gbx_lm --model GreenBitAI/Qwen3.8-Flash-Next-4bit-paged
+```
+
+Every token the draft head proposes is checked by the model itself, so the reply
+is the model's own either way; the head only saves passes over the weights.
+
+**Paging.** The `-paged` builds keep their routed experts in `experts.bin`.
+Where the weights fit in memory they are loaded from it and the model runs at
+full speed; where they do not, experts stream from disk as tokens need them --
+slower, but the model runs. Reading the machine decides that, not a flag;
+`GBX_PAGING=off` holds the experts resident regardless.
+
+### mlx-community models
+
+Text models from [mlx-community](https://huggingface.co/mlx-community) whose
+architecture [mlx-lm](https://github.com/ml-explore/mlx-lm) implements load as
+they are:
+
+```bash
+gbx_lm --model mlx-community/Qwen3-0.6B-4bit
+```
+
+Checked with `mlx-community/Qwen3-0.6B-4bit` and
+`mlx-community/Llama-3.2-1B-Instruct-4bit`. Checkpoints converted for other MLX
+tools -- mlx-vlm, speech, embeddings -- are not supported, and a model stops on
+the end-of-sequence tokens its own configuration declares.
+
+## APIs
+
+One port, three wire protocols:
+
+| path | for |
+| --- | --- |
+| `/v1/chat/completions` | anything written against the OpenAI API |
+| `/v1/responses` | **Codex** |
+| `/v1/messages` | **Claude Code** |
+
+### Thinking
+
+For models that think before they answer, a Chat Completions request can switch
+it and set its depth:
+
+| field | example | notes |
+| --- | --- | --- |
+| `enable_thinking` | `true` / `false` | off when not given; GLM-5.3-Flash thinks either way, and takes only its depth |
+| `thinking` | `{"type": "enabled"}` | the same switch, spelled as GLM spells it; `enable_thinking` wins if both are given |
+| `reasoning_effort` | `"low"`, `"high"`, ... | a word the model's chat template rejects is refused with a 400 naming the ones it takes; a template with no depth setting ignores the field. DeepSeek-V4.1 also takes an integer from 1 to 100 |
+
+The reasoning comes back in `reasoning_content`, apart from the answer.
+
+`GBX_ENABLE_THINKING` and `GBX_REASONING_EFFORT` set the same two for every
+request from the server side: a bare value (`GBX_REASONING_EFFORT=low`) is a
+default the request can override, and a `force:` prefix
+(`GBX_REASONING_EFFORT=force:low`) overrides the request.
+
+### Codex
+
+A provider in `~/.codex/config.toml`:
+
+```toml
+[model_providers.gbx]
+name = "gbx-lm"
+base_url = "http://127.0.0.1:11688/v1"
+wire_api = "responses"
+```
+
+and a profile in `~/.codex/gbx.config.toml`:
+
+```toml
+model_provider = "gbx"
+model = "GreenBitAI/Qwen3.8-Flash-Next-4bit-paged"
+model_context_window = 262144
+```
+
+### Claude Code
+
+`~/.claude/gbx.settings.json`:
+
+```json
+{
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://127.0.0.1:11688",
+    "ANTHROPIC_AUTH_TOKEN": "local",
+    "ANTHROPIC_MODEL": "GreenBitAI/Qwen3.8-Flash-Next-4bit-paged",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "GreenBitAI/Qwen3.8-Flash-Next-4bit-paged"
+  }
+}
+```
+
+Both clients ask for a small model for their own background work, so every name
+in the settings has to be one this server is serving.
+
+## Where things are kept
+
+| path | holds |
+| --- | --- |
+| `~/.local/bin/gbx_lm` | the binary |
+| `~/.libra/cache/onefile/gbx_lm` | the binary's unpacked runtime, recreated on the next start |
+| `~/.libra/cache/models` | downloaded models, unless `HF_HOME` says otherwise |
+| `~/.libra/cache/prompts` | saved prompt caches |
+
+To uninstall, remove the binary and the unpack directory:
+
+```bash
+rm -f ~/.local/bin/gbx_lm
+rm -rf ~/.libra/cache/onefile/gbx_lm
+```
+
+Models and prompt caches stay until you remove them as well.
