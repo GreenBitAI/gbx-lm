@@ -80,6 +80,23 @@ Mac, add `--host 127.0.0.1`.
 | `--prefill_step_size` | tokens per prefill step; lower uses less memory; sized from RAM if not given |
 | `--log-level` | `TRACE` to `CRITICAL` (default `INFO`) |
 
+## Command line
+
+From `gbx_lm` v0.7.1, the binary also runs a model without a server, as a
+subcommand -- one prompt, or an interactive chat:
+
+```bash
+GBX_QWEN4_MTP=on gbx_lm generate --model GreenBitAI/Qwen3.8-Flash-Next-4bit-paged --prompt "Hello" --max-tokens 2048
+GBX_QWEN4_MTP=on gbx_lm chat --model GreenBitAI/Qwen3.8-Flash-Next-4bit-paged --max-tokens 2048
+```
+
+Keep `--max-tokens` generous: the default is 100 for `generate` and 256 for
+`chat`, and these models reason before they answer, which counts against it.
+`gbx_lm generate -h` and `gbx_lm chat -h` list the other options, and each model's
+draft-head switch below works here as it does for the server. Anything else on
+the command line starts the server; an older binary takes `generate` for a
+server option and stops, so upgrade first.
+
 ## Models
 
 ### GreenBitAI builds
