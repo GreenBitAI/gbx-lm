@@ -12,6 +12,21 @@ from [mlx-community](https://huggingface.co/mlx-community), and serves them
 behind the APIs that existing tools already speak: OpenAI's Chat Completions
 and Responses, and Anthropic's Messages.
 
+## What's new in v0.8.0
+
+- **Big models on small Macs.** Qwen3.8-Flash-Next (105 GB) runs on a 48 GB
+  M4 Pro MacBook Pro: experts stream from the SSD, decode is about 11 tok/s
+  with the draft head, 7k-token prompts go at 246 tok/s, and memory peaks at
+  32 GB.
+- **Faster when the model fits.** Decode on a 512 GB M3 Ultra, v0.7.4 to
+  v0.8.0, without / with the draft head: Qwen3.6-35B-A3B 4-bit 96 -> 162 /
+  145 -> 219 tok/s, Qwen3.8-Flash-Next 26 -> 52 / 48 -> 95, GLM-5.3-Flash
+  31 -> 39 / 41 -> 51. Each model card has its own table.
+- **First tokens sooner.** A short prompt gets its first token in about 0.07 s
+  instead of 0.3 s, which every turn of a coding-agent session feels.
+- **Less memory for long prompts on paged models.** Flash-Next at a 25 GB
+  budget peaked at 70 GB before and 34 GB now.
+
 ## Requirements
 
 | | |
