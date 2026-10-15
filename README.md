@@ -73,7 +73,7 @@ and Responses, and Anthropic's Messages.
 # upgrading? clear the previous version's unpack directory first
 rm -rf ~/.libra/cache/onefile/gbx_lm
 
-# on Linux (DGX Spark), use gbx_lm-linux-arm64.tar.gz in both places
+# on Linux (DGX Spark), use gbx_lm-linux-arm64.tar.gz in place of gbx_lm-darwin-arm64.tar.gz
 curl -fL -o gbx_lm-darwin-arm64.tar.gz 'https://github.com/GreenBitAI/gbx-lm/releases/latest/download/gbx_lm-darwin-arm64.tar.gz' \
   && tar -xzf gbx_lm-darwin-arm64.tar.gz gbx_lm \
   && mkdir -p "$HOME/.local/bin" \
