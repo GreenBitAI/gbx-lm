@@ -5,12 +5,33 @@
 > the binary is the reference: use the [latest release](https://github.com/GreenBitAI/gbx-lm/releases/latest)
 > rather than installing from this source.
 
-gbx-lm is a local inference server for Apple Silicon. It runs GreenBitAI's
-models for the Mac -- including builds that page their experts from disk and
-ship their own draft heads for speculative decoding -- as well as MLX models
+gbx-lm is a local inference server for Apple Silicon Macs and, from v0.8.1,
+the NVIDIA DGX Spark. It runs GreenBitAI's models -- including builds that page
+their experts from disk and ship their own draft heads for speculative
+decoding -- as well as MLX models
 from [mlx-community](https://huggingface.co/mlx-community), and serves them
 behind the APIs that existing tools already speak: OpenAI's Chat Completions
 and Responses, and Anthropic's Messages.
+
+## What's new in v0.8.1
+
+- **Linux on the NVIDIA DGX Spark.** The same binary and models run on a DGX
+  Spark (GB10, 128 GB) through MLX's CUDA backend. All six GreenBitAI models
+  load and answer: Qwen3.6-35B-A3B (4- and 8-bit), Qwen3.8-27B and
+  Qwen3.8-Flash-Next fit in memory; GLM-5.3-Flash and DeepSeek-V4.1-Flash
+  page their experts from the SSD. Draft heads work as on the Mac.
+- Decode on a DGX Spark, without / with the draft head (code prompts):
+
+  | model | tok/s |
+  | --- | --- |
+  | Qwen3.6-35B-A3B 4-bit | 69 / 118-132 |
+  | Qwen3.8-27B | 13 / 31-33 |
+  | Qwen3.8-Flash-Next | 24 / 40-53 |
+  | GLM-5.3-Flash (paged) | 5-6 |
+  | DeepSeek-V4.1-Flash (paged) | 4-5 |
+
+  The draft head gives no gain while a model is paged.
+- **Nothing changes on the Mac.** Output and speed are the same as v0.8.0.
 
 ## What's new in v0.8.0
 
@@ -29,11 +50,22 @@ and Responses, and Anthropic's Messages.
 
 ## Requirements
 
+**Mac**
+
 | | |
 | --- | --- |
 | macOS | **15.0 or later** |
 | chip | **Apple Silicon** (arm64). There is no Intel build. |
 | Python | none -- the binary carries what it needs |
+
+**Linux** (from v0.8.1)
+
+| | |
+| --- | --- |
+| machine | **NVIDIA DGX Spark** (GB10). Other Linux machines are not supported yet. |
+| system | arm64, glibc 2.39 or later (DGX OS / Ubuntu 24.04) |
+| driver | an NVIDIA driver with CUDA 13 support. No CUDA toolkit is needed: the binary carries the CUDA libraries it uses. |
+| Python | none |
 
 ## Install
 
@@ -41,6 +73,7 @@ and Responses, and Anthropic's Messages.
 # upgrading? clear the previous version's unpack directory first
 rm -rf ~/.libra/cache/onefile/gbx_lm
 
+# on Linux (DGX Spark), use gbx_lm-linux-arm64.tar.gz in both places
 curl -fL -o gbx_lm-darwin-arm64.tar.gz 'https://github.com/GreenBitAI/gbx-lm/releases/latest/download/gbx_lm-darwin-arm64.tar.gz' \
   && tar -xzf gbx_lm-darwin-arm64.tar.gz gbx_lm \
   && mkdir -p "$HOME/.local/bin" \
@@ -50,8 +83,8 @@ curl -fL -o gbx_lm-darwin-arm64.tar.gz 'https://github.com/GreenBitAI/gbx-lm/rel
 gbx_lm -h
 ```
 
-The build is signed with a Developer ID and notarised, so macOS runs it without
-the usual detour for a downloaded binary.
+The Mac build is signed with a Developer ID and notarised, so macOS runs it
+without the usual detour for a downloaded binary.
 
 **`command not found`** -- `$HOME/.local/bin` is not on your `PATH`:
 
@@ -60,8 +93,8 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc     #
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bash_profile && source ~/.bash_profile   # bash
 ```
 
-**`Killed: 9`** -- a previous version's files are still in the unpack directory,
-and macOS refuses to mix two builds. Run the `rm -rf` line above, then try again.
+**`Killed: 9`** (Mac) -- a previous version's files are still in the unpack
+directory, and macOS refuses to mix two builds. Run the `rm -rf` line above, then try again.
 
 ## Run
 
@@ -82,7 +115,7 @@ curl http://127.0.0.1:11688/v1/chat/completions \
 
 The server listens on every network interface (`0.0.0.0`) unless told
 otherwise, so other machines on your network can reach it. To keep it to this
-Mac, add `--host 127.0.0.1`.
+machine, add `--host 127.0.0.1`.
 
 `gbx_lm -h` lists every option. The ones most often wanted:
 
