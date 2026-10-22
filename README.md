@@ -13,6 +13,33 @@ from [mlx-community](https://huggingface.co/mlx-community), and serves them
 behind the APIs that existing tools already speak: OpenAI's Chat Completions
 and Responses, and Anthropic's Messages.
 
+## What's new in v0.8.2
+
+- **Ternary Bonsai 2 27B, with a draft head of its own.** Prism ML's ternary
+  27B runs on the Mac and on the DGX Spark, with a multi-token prediction head
+  GreenBit AI trained for it on its own output
+  ([GreenBitAI/Ternary-Bonsai-2-27B-gbx](https://huggingface.co/GreenBitAI/Ternary-Bonsai-2-27B-gbx)).
+  Every drafted token is checked by the model, so the replies are the model's own.
+
+  | Ternary Bonsai 2 27B, decode tok/s (short prompts) | gbx-lm + draft head | gbx-lm | llama.cpp (PQ2_0) | Prism ML's MLX runtime |
+  | --- | --- | --- | --- | --- |
+  | Mac Studio, M3 Ultra | **114** (136 on code) | 67 | 44 | 42 |
+  | DGX Spark | **62** (80 on code) | 33 | 29.5 | -- |
+
+  On the Mac that is 2.7x Prism ML's own runtime and 2.6x llama.cpp, and 1.7x
+  the fastest other speculative decoder for it (MTPLX, 66 tok/s). Same machine,
+  same prompts, greedy, for every runtime; details on the model card.
+- **Bonsai 2 on the DGX Spark in 5.9 GB.** The ternary weights are held in a
+  1.6-bit form after loading (12.7 GB before; llama.cpp's PQ2_0 file is 7.2 GB),
+  and long prompts are read 1.6x as fast as llama.cpp's CUDA build (a 4k
+  document at 1603 vs 1001 tok/s, 16k at 1523 vs 969).
+- **Faster prompt processing on the DGX Spark** for every model: a 4k document
+  is read at 1175 instead of 669 tok/s by Qwen3.8-27B, and 3362 instead of 2617
+  by Qwen3.6-35B-A3B. Draft heads now stay ahead of plain decoding at long
+  contexts (GLM-5.3 at 32k: 40 -> 53 tok/s with its head).
+- Fixes: a client leaving mid-stream no longer holds the GPU; Codex's
+  `parallel_tool_calls: false` is accepted.
+
 ## What's new in v0.8.1
 
 - **Linux on the NVIDIA DGX Spark.** The same binary and models run on a DGX
@@ -150,7 +177,7 @@ server option and stops, so upgrade first.
 ### GreenBitAI builds
 
 Each has a model card with its measurements and the details that are particular
-to it. All six carry a draft head in `mtp/`; it is off unless its switch is set.
+to it. All seven carry a draft head in `mtp/`; it is off unless its switch is set.
 
 | model | draft head switch | context |
 | --- | --- | --- |
@@ -160,6 +187,7 @@ to it. All six carry a draft head in `mtp/`; it is off unless its switch is set.
 | [Qwen3.6-35B-A3B-4bit-paged](https://huggingface.co/GreenBitAI/Qwen3.6-35B-A3B-4bit-paged) | `GBX_QWEN35_MTP=on` | 262,144 |
 | [Qwen3.6-35B-A3B-8bit-paged](https://huggingface.co/GreenBitAI/Qwen3.6-35B-A3B-8bit-paged) | `GBX_QWEN35_MTP=on` | 262,144 |
 | [Qwen3.8-27B-4bit](https://huggingface.co/GreenBitAI/Qwen3.8-27B-4bit) | `GBX_QWEN35_MTP=on` | 262,144 |
+| [Ternary-Bonsai-2-27B-gbx](https://huggingface.co/GreenBitAI/Ternary-Bonsai-2-27B-gbx) | `GBX_QWEN35_MTP=on` | 262,144 |
 
 They are collected at
 [GreenBitAI for Apple Silicon](https://huggingface.co/collections/GreenBitAI/greenbitai-for-apple-silicon-6ab6ab6002fbd9988db33833).
