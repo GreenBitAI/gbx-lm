@@ -51,40 +51,7 @@ and Responses, and Anthropic's Messages.
 - Fixes: a client leaving mid-stream no longer holds the GPU; Codex's
   `parallel_tool_calls: false` is accepted.
 
-## What's new in v0.8.1
-
-- **Linux on the NVIDIA DGX Spark.** The same binary and models run on a DGX
-  Spark (GB10, 128 GB) through MLX's CUDA backend. All six GreenBitAI models
-  load and answer: Qwen3.6-35B-A3B (4- and 8-bit), Qwen3.8-27B and
-  Qwen3.8-Flash-Next fit in memory; GLM-5.3-Flash and DeepSeek-V4.1-Flash
-  page their experts from the SSD. Draft heads work as on the Mac.
-- Decode on a DGX Spark, without / with the draft head (code prompts):
-
-  | model | tok/s |
-  | --- | --- |
-  | Qwen3.6-35B-A3B 4-bit | 69 / 118-132 |
-  | Qwen3.8-27B | 13 / 31-33 |
-  | Qwen3.8-Flash-Next | 24 / 40-53 |
-  | GLM-5.3-Flash (paged) | 5-6 |
-  | DeepSeek-V4.1-Flash (paged) | 4-5 |
-
-  The draft head gives no gain while a model is paged.
-- **Nothing changes on the Mac.** Output and speed are the same as v0.8.0.
-
-## What's new in v0.8.0
-
-- **Big models on small Macs.** Qwen3.8-Flash-Next (105 GB) runs on a 48 GB
-  M4 Pro MacBook Pro: experts stream from the SSD, decode is about 11 tok/s
-  with the draft head, 7k-token prompts go at 246 tok/s, and memory peaks at
-  32 GB.
-- **Faster when the model fits.** Decode on a 512 GB M3 Ultra, v0.7.4 to
-  v0.8.0, without / with the draft head: Qwen3.6-35B-A3B 4-bit 96 -> 162 /
-  145 -> 219 tok/s, Qwen3.8-Flash-Next 26 -> 52 / 48 -> 95, GLM-5.3-Flash
-  31 -> 39 / 41 -> 51. Each model card has its own table.
-- **First tokens sooner.** A short prompt gets its first token in about 0.07 s
-  instead of 0.3 s, which every turn of a coding-agent session feels.
-- **Less memory for long prompts on paged models.** Flash-Next at a 25 GB
-  budget peaked at 70 GB before and 34 GB now.
+Earlier versions: see the [releases](https://github.com/GreenBitAI/gbx-lm/releases).
 
 ## Requirements
 
