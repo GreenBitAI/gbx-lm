@@ -33,25 +33,21 @@ and Responses, and Anthropic's Messages.
   1.6-bit form after loading (12.7 GB before; llama.cpp's PQ2_0 file is 7.2 GB),
   and long prompts are read 1.6x as fast as llama.cpp's CUDA build (a 4k
   document at 1603 vs 1001 tok/s, 16k at 1523 vs 969).
-- **Faster prompt processing on the DGX Spark** for every model: a 4k document
-  is read at 1175 instead of 669 tok/s by Qwen3.8-27B, and 3362 instead of 2617
-  by Qwen3.6-35B-A3B. Draft heads now stay ahead of plain decoding at long
-  contexts (GLM-5.3 at 32k: 40 -> 53 tok/s with its head).
-- **Every GreenBitAI model on a DGX Spark** (GB10, 128 GB), v0.8.2:
+- **Faster on the DGX Spark** (GB10, 128 GB). Prompt processing is up to 2.3x
+  as fast as v0.8.1, and draft heads now stay ahead of plain decoding at long
+  contexts (GLM-5.3 at 32k: 40 -> 53 tok/s with its head):
 
-  | model | on a DGX Spark | decode tok/s, plain / with draft head |
-  | --- | --- | --- |
-  | Ternary-Bonsai-2-27B-gbx | in memory (5.9 GB) | 33 / **62** |
-  | Qwen3.6-35B-A3B-4bit-paged | in memory | 68 / **110** |
-  | Qwen3.6-35B-A3B-8bit-paged | in memory | 49 / **74** |
-  | Qwen3.8-27B-4bit | in memory | 13 / **25** |
-  | Qwen3.8-Flash-Next-4bit-paged | in memory | 24 / **40** |
-  | GLM-5.3-Flash-4bit-paged | experts paged from the SSD | 5.4 |
-  | DeepSeek-V4.1-Flash-4bit-paged | experts paged from the SSD | 4.5 |
+  | model | 4k prompt, tok/s | 16k prompt, tok/s | decode tok/s, plain / with draft head |
+  | --- | --- | --- | --- |
+  | Ternary-Bonsai-2-27B-gbx | **1603** (llama.cpp 1001) | **1523** (llama.cpp 969) | 33 / **62** |
+  | Qwen3.8-27B-4bit | 669 -> **1175** | 637 -> **1167** | 13 / **25** |
+  | Qwen3.6-35B-A3B-4bit-paged | 2617 -> **3362** | 2386 -> **3293** | 68 / **110** |
+  | Qwen3.6-35B-A3B-8bit-paged | 2096 -> **2633** | 1968 -> **2609** | 49 / **74** |
+  | Qwen3.8-Flash-Next-4bit-paged | 813 -> **966** | 364 -> **852** | 24 / **40** |
 
-  Short prompts, averaged over code, prose and chat (code alone is faster with
-  a draft head). The draft head gives no gain while a model is paged, so the
-  last two are shown without it.
+  Prompt columns: v0.8.1 -> v0.8.2. Decode: short prompts, averaged over code,
+  prose and chat (code alone is faster with a draft head). All five run in
+  memory on a DGX Spark.
 - Fixes: a client leaving mid-stream no longer holds the GPU; Codex's
   `parallel_tool_calls: false` is accepted.
 
@@ -205,7 +201,7 @@ to it. All seven carry a draft head in `mtp/`; it is off unless its switch is se
 | [Ternary-Bonsai-2-27B-gbx](https://huggingface.co/GreenBitAI/Ternary-Bonsai-2-27B-gbx) | `GBX_QWEN35_MTP=on` | 262,144 |
 
 They are collected at
-[GreenBitAI for Apple Silicon](https://huggingface.co/collections/GreenBitAI/greenbitai-for-apple-silicon-6ab6ab6002fbd9988db33833).
+[GreenBitAI for Apple Silicon and DGX Spark](https://huggingface.co/collections/GreenBitAI/greenbitai-for-apple-silicon-and-dgx-spark).
 
 ```bash
 GBX_QWEN4_MTP=on gbx_lm --model GreenBitAI/Qwen3.8-Flash-Next-4bit-paged
