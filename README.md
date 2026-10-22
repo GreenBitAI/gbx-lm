@@ -37,6 +37,21 @@ and Responses, and Anthropic's Messages.
   is read at 1175 instead of 669 tok/s by Qwen3.8-27B, and 3362 instead of 2617
   by Qwen3.6-35B-A3B. Draft heads now stay ahead of plain decoding at long
   contexts (GLM-5.3 at 32k: 40 -> 53 tok/s with its head).
+- **Every GreenBitAI model on a DGX Spark** (GB10, 128 GB), v0.8.2:
+
+  | model | on a DGX Spark | decode tok/s, plain / with draft head |
+  | --- | --- | --- |
+  | Ternary-Bonsai-2-27B-gbx | in memory (5.9 GB) | 33 / **62** |
+  | Qwen3.6-35B-A3B-4bit-paged | in memory | 68 / **110** |
+  | Qwen3.6-35B-A3B-8bit-paged | in memory | 49 / **74** |
+  | Qwen3.8-27B-4bit | in memory | 13 / **25** |
+  | Qwen3.8-Flash-Next-4bit-paged | in memory | 24 / **40** |
+  | GLM-5.3-Flash-4bit-paged | experts paged from the SSD | 5.4 |
+  | DeepSeek-V4.1-Flash-4bit-paged | experts paged from the SSD | 4.5 |
+
+  Short prompts, averaged over code, prose and chat (code alone is faster with
+  a draft head). The draft head gives no gain while a model is paged, so the
+  last two are shown without it.
 - Fixes: a client leaving mid-stream no longer holds the GPU; Codex's
   `parallel_tool_calls: false` is accepted.
 
@@ -203,7 +218,8 @@ is the model's own either way; the head only saves passes over the weights.
 Where the weights fit in memory they are loaded from it and the model runs at
 full speed; where they do not, experts stream from disk as tokens need them --
 slower, but the model runs. Reading the machine decides that, not a flag;
-`GBX_PAGING=off` holds the experts resident regardless.
+`GBX_PAGING=off` holds the experts resident regardless. On a DGX Spark,
+GLM-5.3-Flash and DeepSeek-V4.1-Flash page; the other five run in memory.
 
 ### mlx-community models
 
