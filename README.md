@@ -159,7 +159,7 @@ to it. All seven carry a draft head in `mtp/`; it is off unless its switch is se
 
 | model | draft head switch | context |
 | --- | --- | --- |
-| [DeepSeek-V4.1-Flash-4bit-paged](https://huggingface.co/GreenBitAI/DeepSeek-V4.1-Flash-4bit-paged) | `GBX_DEEPSEEK_MTP=on` | 1,048,576 |
+| [DeepSeek-V4.1-Flash-1017-4bit-paged](https://huggingface.co/GreenBitAI/DeepSeek-V4.1-Flash-1017-4bit-paged) | `GBX_DEEPSEEK_MTP=on` | 1,048,576 |
 | [GLM-5.3-Flash-4bit-paged](https://huggingface.co/GreenBitAI/GLM-5.3-Flash-4bit-paged) | `GBX_GLM53_MTP=on` | 1,048,576 |
 | [Qwen3.8-Flash-Next-4bit-paged](https://huggingface.co/GreenBitAI/Qwen3.8-Flash-Next-4bit-paged) | `GBX_QWEN4_MTP=on` | 262,144 |
 | [Qwen3.6-35B-A3B-4bit-paged](https://huggingface.co/GreenBitAI/Qwen3.6-35B-A3B-4bit-paged) | `GBX_QWEN35_MTP=on` | 262,144 |
@@ -183,6 +183,16 @@ full speed; where they do not, experts stream from disk as tokens need them --
 slower, but the model runs. Reading the machine decides that, not a flag;
 `GBX_PAGING=off` holds the experts resident regardless. On a DGX Spark,
 GLM-5.3-Flash and DeepSeek-V4.1-Flash page; the other five run in memory.
+
+**DFlash 2 for Qwen3.8-27B** (v0.8.3 or later). The 27B repository also carries
+Inco AI's DFlash 2 draft in `dflash/` (1.3 GB, read only when asked for). It
+proposes seven tokens in one pass of a small model: faster than the model's own
+head on code and maths, slower on prose and chat, so it is a choice and not the
+default. Text only; a request with images is served without drafting.
+
+```bash
+GBX_QWEN35_MTP=on GBX_QWEN35_DRAFT=dflash gbx_lm --model GreenBitAI/Qwen3.8-27B-4bit
+```
 
 ### mlx-community models
 
