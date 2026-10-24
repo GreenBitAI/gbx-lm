@@ -13,43 +13,42 @@ from [mlx-community](https://huggingface.co/mlx-community), and serves them
 behind the APIs that existing tools already speak: OpenAI's Chat Completions
 and Responses, and Anthropic's Messages.
 
-## What's new in v0.8.2
+## What's new in v0.8.3
 
-- **Ternary Bonsai 2 27B, with a draft head of its own.** Prism ML's ternary
-  27B runs on the Mac and on the DGX Spark, with a multi-token prediction head
-  GreenBit AI trained for it on its own output
-  ([GreenBitAI/Ternary-Bonsai-2-27B-gbx](https://huggingface.co/GreenBitAI/Ternary-Bonsai-2-27B-gbx)).
-  Every drafted token is checked by the model, so the replies are the model's own.
+- **Long conversations on the DGX Spark, about twice as fast.** A conversation
+  that already holds a long document now answers each new message in half the
+  time or less -- the shape of a coding agent's work. With a ~54k-token
+  document in the conversation:
 
-  | Ternary Bonsai 2 27B, decode tok/s (short prompts) | gbx-lm + draft head | gbx-lm | llama.cpp (PQ2_0) | Prism ML's MLX runtime |
+  | DGX Spark | first answer, v0.8.2 -> v0.8.3 | next 1.3k-token message, v0.8.2 -> v0.8.3 |
+  | --- | --- | --- |
+  | Ternary-Bonsai-2-27B-gbx | 92 s -> **42 s** | 4.5 s -> **1.6 s** |
+  | Qwen3.8-27B-4bit | 101 s -> **53 s** | 4.5 s -> **2.3 s** |
+  | Qwen3.6-35B-A3B-4bit-paged | 38 s -> **14 s** | 1.6 s -> **0.8 s** |
+  | Qwen3.8-Flash-Next-4bit-paged | 117 s -> **54 s** | 4.9 s -> **2.2 s** |
+
+- **Faster prompts and decoding on the DGX Spark.** Prompt processing on the
+  Qwen3.6-35B builds is up to 1.8x as fast, and Qwen3.8-Flash-Next no longer
+  slows down on long prompts:
+
+  | DGX Spark | 4k prompt, tok/s | 16k prompt, tok/s | 54k prompt, tok/s | decode tok/s, plain / with draft head (code) |
   | --- | --- | --- | --- | --- |
-  | Mac Studio, M3 Ultra | **114** (136 on code) | 67 | 44 | 42 |
-  | DGX Spark | **62** (80 on code) | 33 | 29.5 | -- |
+  | Qwen3.6-35B-A3B-4bit-paged | 3845 -> **5694** | 3780 -> **5462** | 3262 -> **4409** | 64 -> **71** / 133 -> **141** |
+  | Qwen3.6-35B-A3B-8bit-paged | 2838 -> **5015** | 2829 -> **4927** | 2531 -> **4059** | 48 -> **53** / 88 -> **93** |
+  | Qwen3.8-Flash-Next-4bit-paged | 1028 -> **1274** | 911 -> **1243** | 480 -> **1065** | 23 -> 24 / 46 -> 46 |
+  | Qwen3.8-27B-4bit | 1186 -> 1193 | 1173 -> 1180 | 1048 -> 1052 | 13 / 27 -> **34** |
+  | Ternary-Bonsai-2-27B-gbx | 1620 -> 1623 | 1568 -> 1565 | 1261 -> 1338 | 33 / 76 -> 76 |
 
-  On the Mac that is 2.7x Prism ML's own runtime and 2.6x llama.cpp, and 1.7x
-  the fastest other speculative decoder for it (MTPLX, 66 tok/s). Same machine,
-  same prompts, greedy, for every runtime; details on the model card.
-- **Bonsai 2 on the DGX Spark in 5.9 GB.** The ternary weights are held in a
-  1.6-bit form after loading (12.7 GB before; llama.cpp's PQ2_0 file is 7.2 GB),
-  and long prompts are read 1.6x as fast as llama.cpp's CUDA build (a 4k
-  document at 1603 vs 1001 tok/s, 16k at 1523 vs 969).
-- **Faster on the DGX Spark** (GB10, 128 GB). Prompt processing is up to 2.3x
-  as fast as v0.8.1, and draft heads now stay ahead of plain decoding at long
-  contexts (GLM-5.3 at 32k: 40 -> 53 tok/s with its head):
-
-  | model | 4k prompt, tok/s | 16k prompt, tok/s | decode tok/s, plain / with draft head |
-  | --- | --- | --- | --- |
-  | Ternary-Bonsai-2-27B-gbx | **1603** (llama.cpp 1001) | **1523** (llama.cpp 969) | 33 / **62** |
-  | Qwen3.8-27B-4bit | 669 -> **1175** | 637 -> **1167** | 13 / **25** |
-  | Qwen3.6-35B-A3B-4bit-paged | 2617 -> **3362** | 2386 -> **3293** | 68 / **110** |
-  | Qwen3.6-35B-A3B-8bit-paged | 2096 -> **2633** | 1968 -> **2609** | 49 / **74** |
-  | Qwen3.8-Flash-Next-4bit-paged | 813 -> **966** | 364 -> **852** | 24 / **40** |
-
-  Prompt columns: v0.8.1 -> v0.8.2. Decode: short prompts, averaged over code,
-  prose and chat (code alone is faster with a draft head). All five run in
-  memory on a DGX Spark.
-- Fixes: a client leaving mid-stream no longer holds the GPU; Codex's
-  `parallel_tool_calls: false` is accepted.
+  v0.8.2 -> v0.8.3, one request at a time, greedy.
+- **DFlash 2 for Qwen3.8-27B, as an option.** Its repository now also carries
+  Inco AI's DFlash 2 draft, which proposes seven tokens in one pass:
+  `GBX_QWEN35_MTP=on GBX_QWEN35_DRAFT=dflash`. On code it decodes faster than
+  the model's own draft head -- 140 vs 114 tok/s on a Mac Studio (M3 Ultra), 45
+  vs 34 on a DGX Spark -- and slower on prose, so the head stays the default.
+- **On the Mac**, speeds are those of v0.8.2, and later messages in a long
+  conversation come back about 10% sooner.
+- Fixes: Ternary Bonsai 2 on the DGX Spark no longer pauses about 3 s the first
+  time it meets each new prompt length (every turn of an agent did).
 
 Earlier versions: see the [releases](https://github.com/GreenBitAI/gbx-lm/releases).
 
