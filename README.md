@@ -48,7 +48,9 @@ and Responses, and Anthropic's Messages.
 - **On the Mac**, speeds are those of v0.8.2, and later messages in a long
   conversation come back about 10% sooner.
 - Fixes: Ternary Bonsai 2 on the DGX Spark no longer pauses about 3 s the first
-  time it meets each new prompt length (every turn of an agent did); a model in a
+  time it meets each new prompt length (every turn of an agent did); on the DGX
+  Spark the server's memory no longer grows with every turn of a long conversation
+  (about 0.9 GiB per 7k-token turn before); a model in a
   local directory (`--model /path/to/model`) now loads, from the command line and
   in the server ([#20](https://github.com/GreenBitAI/gbx-lm/issues/20)).
 
