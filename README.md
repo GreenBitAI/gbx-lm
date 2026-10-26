@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/gbx-banner-dark.png">
+  <img alt="gbx: fast local inference for low-bit LLMs" src="assets/gbx-banner-light.png" width="100%">
+</picture>
+
 # gbx-lm
 
 > **Note:** the source code in this repository is an older version and is no
