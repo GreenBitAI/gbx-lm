@@ -18,44 +18,12 @@ and Responses, and Anthropic's Messages.
 
 ## What's new in v0.8.3
 
-- **Long conversations on the DGX Spark, about twice as fast.** A conversation
-  that already holds a long document now answers each new message in half the
-  time or less -- the shape of a coding agent's work. With a ~54k-token
-  document in the conversation:
-
-  | DGX Spark | first answer, v0.8.2 -> v0.8.3 | next 1.3k-token message, v0.8.2 -> v0.8.3 |
-  | --- | --- | --- |
-  | Ternary-Bonsai-2-27B-gbx | 92 s -> **42 s** | 4.5 s -> **1.6 s** |
-  | Qwen3.8-27B-4bit | 101 s -> **53 s** | 4.5 s -> **2.3 s** |
-  | Qwen3.6-35B-A3B-4bit-paged | 38 s -> **14 s** | 1.6 s -> **0.8 s** |
-  | Qwen3.8-Flash-Next-4bit-paged | 117 s -> **54 s** | 4.9 s -> **2.2 s** |
-
-- **Faster prompts and decoding on the DGX Spark.** Prompt processing on the
-  Qwen3.6-35B builds is up to 1.8x as fast, and Qwen3.8-Flash-Next no longer
-  slows down on long prompts:
-
-  | DGX Spark | 4k prompt, tok/s | 16k prompt, tok/s | 54k prompt, tok/s | decode tok/s, plain / with draft head (code) |
-  | --- | --- | --- | --- | --- |
-  | Qwen3.6-35B-A3B-4bit-paged | 3845 -> **5694** | 3780 -> **5462** | 3262 -> **4409** | 64 -> **71** / 133 -> **141** |
-  | Qwen3.6-35B-A3B-8bit-paged | 2838 -> **5015** | 2829 -> **4927** | 2531 -> **4059** | 48 -> **53** / 88 -> **93** |
-  | Qwen3.8-Flash-Next-4bit-paged | 1028 -> **1274** | 911 -> **1243** | 480 -> **1065** | 23 -> 24 / 46 -> 46 |
-  | Qwen3.8-27B-4bit | 1186 -> 1193 | 1173 -> 1180 | 1048 -> 1052 | 13 / 27 -> **34** |
-  | Ternary-Bonsai-2-27B-gbx | 1620 -> 1623 | 1568 -> 1565 | 1261 -> 1338 | 33 / 76 -> 76 |
-
-  v0.8.2 -> v0.8.3, one request at a time, greedy.
-- **DFlash 2 for Qwen3.8-27B, as an option.** Its repository now also carries
-  Inco AI's DFlash 2 draft, which proposes seven tokens in one pass:
-  `GBX_QWEN35_MTP=on GBX_QWEN35_DRAFT=dflash`. On code it decodes faster than
-  the model's own draft head -- 140 vs 114 tok/s on a Mac Studio (M3 Ultra), 45
-  vs 34 on a DGX Spark -- and slower on prose, so the head stays the default.
-- **On the Mac**, speeds are those of v0.8.2, and later messages in a long
-  conversation come back about 10% sooner.
-- Fixes: Ternary Bonsai 2 on the DGX Spark no longer pauses about 3 s the first
-  time it meets each new prompt length (every turn of an agent did); on the DGX
-  Spark the server's memory no longer grows with every turn of a long conversation
-  (about 0.9 GiB per 7k-token turn before); a model in a
-  local directory (`--model /path/to/model`) now loads, from the command line and
-  in the server ([#20](https://github.com/GreenBitAI/gbx-lm/issues/20)).
+- **Long conversations on the DGX Spark, about 2x faster.** A follow-up in a
+  conversation that already holds a long document comes back in 1-2 seconds.
+- **Prompt processing up to 1.8x faster on the DGX Spark**, with Qwen3.6-35B
+  reading prompts at up to 5,700 tokens/s.
+- **DFlash 2 for Qwen3.8-27B**: an optional draft for code, up to 140 tokens/s
+  on a Mac Studio.
 
 Earlier versions: see the [releases](https://github.com/GreenBitAI/gbx-lm/releases).
 
