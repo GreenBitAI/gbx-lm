@@ -3,8 +3,6 @@
   <img alt="gbx: fast local inference for low-bit LLMs" src="assets/gbx-banner-light.png" width="100%">
 </picture>
 
-# gbx-lm
-
 > **Note:** the source code in this repository is an older version and is no
 > longer where gbx-lm is developed. gbx-lm now ships as a signed binary, and
 > the binary is the reference: use the [latest release](https://github.com/GreenBitAI/gbx-lm/releases/latest)
