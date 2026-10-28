@@ -14,16 +14,15 @@ their experts from disk and ship their own draft heads for speculative
 decoding -- as well as MLX models
 from [mlx-community](https://huggingface.co/mlx-community), and serves them
 behind the APIs that existing tools already speak: OpenAI's Chat Completions
-and Responses, and Anthropic's Messages.
+and Responses, and Anthropic's Messages -- and, from v0.8.5, OpenAI's
+speech route for text to speech.
 
-## What's new in v0.8.3
+## What's new in v0.8.5
 
-- **Long conversations on the DGX Spark, about 2x faster.** A follow-up in a
-  conversation that already holds a long document comes back in 1-2 seconds.
-- **Prompt processing up to 1.8x faster on the DGX Spark**, with Qwen3.6-35B
-  reading prompts at up to 5,700 tokens/s.
-- **DFlash 2 for Qwen3.8-27B**: an optional draft for code, up to 140 tokens/s
-  on a Mac Studio.
+- **Text to speech**: [Fish Audio Drama 3](https://huggingface.co/GreenBitAI/Drama-3-8bit-paged),
+  English and Chinese, at about 2.6x real time on a Mac Studio.
+- **OpenAI's `/v1/audio/speech`**, streamed, with the first audio in under 0.3 s
+  and voices cloned from your own short recordings.
 
 Earlier versions: see the [releases](https://github.com/GreenBitAI/gbx-lm/releases).
 
@@ -168,6 +167,30 @@ default. Text only; a request with images is served without drafting.
 GBX_QWEN35_MTP=on GBX_QWEN35_DRAFT=dflash gbx_lm --model GreenBitAI/Qwen3.8-27B-4bit
 ```
 
+### Speech
+
+[Drama-3-8bit-paged](https://huggingface.co/GreenBitAI/Drama-3-8bit-paged)
+(v0.8.5 or later) turns text into speech through `/v1/audio/speech`. Its audio
+codec is a separate package, [gbx-codecs](https://github.com/GreenBitAI/gbx-codecs),
+installed once:
+
+```bash
+python3 -m venv ~/.gbx-codecs && ~/.gbx-codecs/bin/pip install gbx-codecs
+# on Linux (DGX Spark): ~/.gbx-codecs/bin/pip install "mlx[cuda13]" gbx-codecs
+gbx_lm --model GreenBitAI/Drama-3-8bit-paged --voices_dir ~/voices
+```
+
+A voice is a short recording `NAME.wav` beside its transcript `NAME.txt` in
+`--voices_dir`; ask for it with `"voice": "NAME"`, or `"default"` for none. The
+model card has the details.
+
+```bash
+curl http://127.0.0.1:11688/v1/audio/speech \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"GreenBitAI/Drama-3-8bit-paged","input":"Hello from gbx.","voice":"default"}' \
+  -o hello.wav
+```
+
 ### mlx-community models
 
 Text models from [mlx-community](https://huggingface.co/mlx-community) whose
@@ -185,13 +208,14 @@ the end-of-sequence tokens its own configuration declares.
 
 ## APIs
 
-One port, three wire protocols:
+One port for all of them:
 
 | path | for |
 | --- | --- |
 | `/v1/chat/completions` | anything written against the OpenAI API |
 | `/v1/responses` | **Codex** |
 | `/v1/messages` | **Claude Code** |
+| `/v1/audio/speech` | text to speech (`wav` or `pcm`), with a speech model |
 
 ### Thinking
 
