@@ -17,12 +17,13 @@ behind the APIs that existing tools already speak: OpenAI's Chat Completions
 and Responses, and Anthropic's Messages -- and, from v0.8.5, OpenAI's
 speech route for text to speech.
 
-## What's new in v0.8.5
+## What's new in v0.8.6
 
-- **Text to speech**: [Fish Audio Drama 3](https://huggingface.co/GreenBitAI/Drama-3-8bit-paged),
-  English and Chinese, at about 2.6x real time on a Mac Studio.
-- **OpenAI's `/v1/audio/speech`**, streamed, with the first audio in under 0.3 s
-  and voices cloned from your own short recordings.
+- **Faster generation on the DGX Spark**: Qwen3.6-35B-A3B from 64 to 79
+  tokens/s, Qwen3.8-Flash-Next from 19 to 25 tokens/s.
+- **Qwen3.8-Flash-Next 40% faster on a Mac**: 54 to 76 tokens/s on a Mac
+  Studio; DeepSeek-V4.1 from 22.5 to 25.8 tokens/s.
+- **`gbx_lm --version`** prints the version you are running.
 
 Earlier versions: see the [releases](https://github.com/GreenBitAI/gbx-lm/releases).
 
